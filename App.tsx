@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Layout } from './components/Layout';
 import { db, getTodayString } from './services/db';
-import { supabase } from './services/supabase';
+import { supabase, isSupabaseConfigured } from './services/supabase';
 import { User, Lead, Role, LeadStatus, ActivityLog, TodoStatus } from './types';
 import { LeadTable } from './components/LeadTable';
 import { AddLeadModal } from './components/AddLeadModal';
@@ -14,7 +14,91 @@ import { DatabaseSetup } from './components/DatabaseSetup';
 import { TeamStatsPage } from './components/TeamStatsPage';
 import { Dashboard } from './components/Dashboard';
 import { MyTasks } from './components/MyTasks';
-import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap } from 'lucide-react';
+import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap, AlertTriangle, Copy, Check } from 'lucide-react';
+
+// Configuration Required Screen
+const ConfigurationRequired: React.FC = () => {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const envExample = `VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key`;
+
+  return (
+    <div className="min-h-screen mesh-bg flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] bg-amber-500/20 blur-[120px] rounded-full pointer-events-none opacity-40"></div>
+      
+      <div className="max-w-2xl w-full animate-scale-in glass p-10 rounded-[2.5rem] relative z-10 border border-white/10 shadow-2xl">
+        <div className="text-center mb-10">
+          <div className="w-16 h-16 bg-amber-500/20 border border-amber-500/30 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <AlertTriangle className="text-amber-400" size={32} />
+          </div>
+          <h1 className="text-3xl font-medium text-white tracking-tight mb-2">Configuration Required</h1>
+          <p className="text-sm text-muted">Supabase environment variables are missing</p>
+        </div>
+
+        <div className="space-y-6">
+          <div className="p-6 bg-white/5 border border-white/10 rounded-2xl">
+            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <span className="w-6 h-6 bg-brand-500 rounded-lg flex items-center justify-center text-xs">1</span>
+              Create a <code className="text-brand-400">.env</code> file in your project root
+            </h3>
+            <div className="relative">
+              <pre className="bg-black/50 p-4 rounded-xl text-xs text-emerald-400 font-mono overflow-x-auto">
+{envExample}
+              </pre>
+              <button
+                onClick={() => copyToClipboard(envExample, 'env')}
+                className="absolute top-2 right-2 p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
+              >
+                {copied === 'env' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} className="text-muted" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="p-6 bg-white/5 border border-white/10 rounded-2xl">
+            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <span className="w-6 h-6 bg-brand-500 rounded-lg flex items-center justify-center text-xs">2</span>
+              Get your credentials from Supabase
+            </h3>
+            <ol className="text-sm text-muted space-y-2 list-decimal list-inside">
+              <li>Go to <a href="https://supabase.com" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">supabase.com</a> and create a project</li>
+              <li>Navigate to Project Settings → API</li>
+              <li>Copy the <strong className="text-white">Project URL</strong> and <strong className="text-white">anon public</strong> key</li>
+            </ol>
+          </div>
+
+          <div className="p-6 bg-white/5 border border-white/10 rounded-2xl">
+            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <span className="w-6 h-6 bg-brand-500 rounded-lg flex items-center justify-center text-xs">3</span>
+              Restart the development server
+            </h3>
+            <div className="relative">
+              <pre className="bg-black/50 p-4 rounded-xl text-xs text-emerald-400 font-mono">npm run dev</pre>
+              <button
+                onClick={() => copyToClipboard('npm run dev', 'cmd')}
+                className="absolute top-2 right-2 p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
+              >
+                {copied === 'cmd' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} className="text-muted" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+            <p className="text-xs text-amber-400 text-center">
+              <strong>For Vercel deployment:</strong> Add these environment variables in your Vercel project settings under Settings → Environment Variables
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -188,6 +272,11 @@ const App: React.FC = () => {
     if (!Array.isArray(leads)) return null;
     return leads.find(l => l.id === selectedLeadId) || null;
   }, [leads, selectedLeadId]);
+
+  // Show configuration screen if Supabase is not configured
+  if (!isSupabaseConfigured) {
+    return <ConfigurationRequired />;
+  }
 
   if (loading) return (
     <div className="min-h-screen bg-[#050505] flex items-center justify-center">
