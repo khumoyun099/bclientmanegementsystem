@@ -248,7 +248,7 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
             {(activeTab === LeadStatus.WARM || activeTab === LeadStatus.PROGRESSIVE) && (
                 <>
                     <td className="px-2 py-1.5 overflow-hidden" style={{ width: colWidths.todo }}>
-                        <span className="text-[10px] font-black text-brand-400 uppercase">FOLLOWUP</span>
+                        {renderTodoSelect([TodoStatus.NEW, TodoStatus.FOLLOWUP, TodoStatus.CALLBACK])}
                     </td>
                     <td className="px-2 py-1.5 overflow-hidden" style={{ width: colWidths.frequency }}>
                         {renderFrequencySelect()}

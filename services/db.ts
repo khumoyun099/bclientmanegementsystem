@@ -32,12 +32,18 @@ class DBService {
         .eq('id', user.id)
         .maybeSingle();
 
-      if (fetchError) throw fetchError;
+      if (fetchError) {
+        console.error('Error fetching profile:', fetchError);
+        throw fetchError;
+      }
 
       if (!profile) {
-        const { data: newProfile, error: upsertError } = await supabase
+        console.log('No profile found, creating new profile for user:', user.id);
+        
+        // Try INSERT first (for new users)
+        const { data: newProfile, error: insertError } = await supabase
           .from('profiles')
-          .upsert({
+          .insert({
             id: user.id,
             email: user.email,
             name: user.user_metadata?.name || user.email?.split('@')[0] || 'User',
@@ -48,7 +54,28 @@ class DBService {
           .select()
           .single();
 
-        if (upsertError) throw upsertError;
+        if (insertError) {
+          console.error('Error creating profile:', insertError);
+          // If insert fails, try to fetch again (maybe RLS issue)
+          const { data: retryProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .maybeSingle();
+          
+          if (retryProfile) {
+            return {
+              id: user.id,
+              email: user.email || '',
+              name: retryProfile.name,
+              role: (retryProfile.role || Role.AGENT) as Role,
+              points: retryProfile.points || 0,
+              theme_preference: retryProfile.theme_preference || 'dark'
+            };
+          }
+          throw insertError;
+        }
+        
         return {
           id: user.id,
           email: user.email || '',
@@ -68,6 +95,7 @@ class DBService {
         theme_preference: profile.theme_preference || 'dark'
       };
     } catch (err: any) {
+      console.error('getCurrentProfile error:', err);
       return null;
     }
   }

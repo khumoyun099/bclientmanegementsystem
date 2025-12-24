@@ -8,15 +8,25 @@ export const Auth: React.FC = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isSignUp, setIsSignUp] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setSuccess(null);
     try {
-      if (isSignUp) {
+      if (isForgotPassword) {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin,
+        });
+        if (error) throw error;
+        setSuccess('Password reset email sent! Check your inbox.');
+        setIsForgotPassword(false);
+      } else if (isSignUp) {
         const { error } = await supabase.auth.signUp({ 
             email, 
             password,
@@ -30,7 +40,13 @@ export const Auth: React.FC = () => {
         if (error) throw error;
       }
     } catch (err: any) {
-      setError(err.message === 'Invalid login credentials' ? 'Invalid email or password.' : err.message);
+      if (err.message === 'Invalid login credentials') {
+        setError('Invalid email or password. If you previously had an account, try "Forgot Password".');
+      } else if (err.message?.includes('User already registered')) {
+        setError('This email is already registered. Please log in instead, or use "Forgot Password" to reset your password.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -53,8 +69,12 @@ export const Auth: React.FC = () => {
             <div className="w-12 h-12 bg-white text-black rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl">
                <Zap size={24} fill="currentColor" />
             </div>
-            <h1 className="text-3xl font-medium text-white tracking-tight mb-2">Portal Access</h1>
-            <p className="text-xs text-muted uppercase tracking-widest">{isSignUp ? 'Create your agent account' : 'Welcome back, agent'}</p>
+            <h1 className="text-3xl font-medium text-white tracking-tight mb-2">
+              {isForgotPassword ? 'Reset Password' : 'Portal Access'}
+            </h1>
+            <p className="text-xs text-muted uppercase tracking-widest">
+              {isForgotPassword ? 'Enter your email to reset' : isSignUp ? 'Create your agent account' : 'Welcome back, agent'}
+            </p>
           </div>
 
           <form onSubmit={handleAuth} className="space-y-4">
@@ -70,17 +90,19 @@ export const Auth: React.FC = () => {
               />
             </div>
 
-            <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-              <input 
-                required
-                type="password" 
-                placeholder="Password" 
-                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white focus:ring-1 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
+            {!isForgotPassword && (
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                <input 
+                  required
+                  type="password" 
+                  placeholder="Password" 
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-sm text-white focus:ring-1 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            )}
 
             <button 
               type="submit" 
@@ -88,7 +110,7 @@ export const Auth: React.FC = () => {
               className="w-full bg-white text-black py-4 rounded-2xl font-semibold text-sm hover:bg-neutral-200 transition-all flex items-center justify-center gap-3 shadow-xl disabled:opacity-50 mt-6"
             >
               {loading ? <Loader2 className="animate-spin" size={20} /> : (
-                  isSignUp ? 'Create Account' : 'Access Dashboard'
+                  isForgotPassword ? 'Send Reset Email' : isSignUp ? 'Create Account' : 'Access Dashboard'
               )}
             </button>
           </form>
@@ -99,11 +121,36 @@ export const Auth: React.FC = () => {
               </div>
           )}
 
-          <div className="mt-8 pt-8 border-t border-white/10 text-center">
+          {success && (
+              <div className="mt-6 p-4 bg-green-500/10 border border-green-500/20 rounded-2xl">
+                  <p className="text-[10px] text-green-400 text-center font-bold uppercase tracking-widest">{success}</p>
+              </div>
+          )}
+
+          <div className="mt-8 pt-8 border-t border-white/10 text-center space-y-3">
+            {!isForgotPassword && !isSignUp && (
+              <button 
+                onClick={() => { setIsForgotPassword(true); setError(null); setSuccess(null); }} 
+                className="text-xs text-muted hover:text-white transition-colors"
+              >
+                Forgot your password?
+              </button>
+            )}
             <p className="text-xs text-muted">
-              {isSignUp ? 'Already a member?' : "New recruit?"}
-              <button onClick={() => setIsSignUp(!isSignUp)} className="ml-2 text-white font-bold hover:underline">
-                {isSignUp ? 'Log In' : 'Join Team'}
+              {isForgotPassword ? 'Remember your password?' : isSignUp ? 'Already a member?' : "New recruit?"}
+              <button 
+                onClick={() => { 
+                  if (isForgotPassword) {
+                    setIsForgotPassword(false);
+                  } else {
+                    setIsSignUp(!isSignUp);
+                  }
+                  setError(null); 
+                  setSuccess(null); 
+                }} 
+                className="ml-2 text-white font-bold hover:underline"
+              >
+                {isForgotPassword ? 'Log In' : isSignUp ? 'Log In' : 'Join Team'}
               </button>
             </p>
           </div>
