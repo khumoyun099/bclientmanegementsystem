@@ -122,6 +122,8 @@ const App: React.FC = () => {
     }
   });
 
+  const [selectedAgentFilter, setSelectedAgentFilter] = useState<string | null>(null);
+
   useEffect(() => {
     try {
       localStorage.setItem('followup_active_tab', activeTab);
@@ -232,9 +234,17 @@ const App: React.FC = () => {
     await supabase.auth.signOut();
   };
 
-  const tableLeads = useMemo(() => {
+  // Filter leads by selected agent (for admin view)
+  const agentFilteredLeads = useMemo(() => {
     const safeLeads = Array.isArray(leads) ? leads : [];
-    let filtered = safeLeads;
+    if (currentUser?.role === Role.ADMIN && selectedAgentFilter) {
+      return safeLeads.filter(l => l.assigned_agent_id === selectedAgentFilter);
+    }
+    return safeLeads;
+  }, [leads, currentUser, selectedAgentFilter]);
+
+  const tableLeads = useMemo(() => {
+    let filtered = agentFilteredLeads;
     const today = getTodayString();
 
     if (currentUser?.role === Role.AGENT) {
@@ -266,7 +276,7 @@ const App: React.FC = () => {
     }
 
     return filteredByTab;
-  }, [leads, activeTab, currentUser]);
+  }, [agentFilteredLeads, activeTab, currentUser]);
 
   const currentSelectedLead = useMemo(() => {
     if (!Array.isArray(leads)) return null;
@@ -320,10 +330,41 @@ const App: React.FC = () => {
                 </button>
               </div>
 
+              {/* Admin Agent Filter Dropdown */}
+              {currentUser.role === Role.ADMIN && (
+                <div className="flex items-center gap-3 p-4 bg-white/[0.02] border border-white/5 rounded-xl">
+                  <Users size={16} className="text-brand-500" />
+                  <span className="text-xs font-bold text-muted uppercase tracking-widest">View as Agent:</span>
+                  <select
+                    value={selectedAgentFilter || ''}
+                    onChange={(e) => setSelectedAgentFilter(e.target.value || null)}
+                    className="flex-1 max-w-xs bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all cursor-pointer"
+                  >
+                    <option value="" className="bg-[#111]">All Agents</option>
+                    {allUsers
+                      .filter(u => u.role === Role.AGENT)
+                      .map(agent => (
+                        <option key={agent.id} value={agent.id} className="bg-[#111]">
+                          {agent.name} ({agent.email})
+                        </option>
+                      ))
+                    }
+                  </select>
+                  {selectedAgentFilter && (
+                    <button
+                      onClick={() => setSelectedAgentFilter(null)}
+                      className="px-3 py-1.5 text-xs font-bold text-muted hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="flex items-center gap-4">
                 <nav className="flex-1 flex space-x-1 p-1 bg-white/[0.03] rounded-xl border border-white/5 overflow-x-auto custom-scrollbar">
                   {Object.values(LeadStatus).map((status) => {
-                    const count = Array.isArray(leads) ? leads.filter(l => l.status === status).length : 0;
+                    const count = agentFilteredLeads.filter(l => l.status === status).length;
                     const isActive = activeTab === status;
                     return (
                       <button
@@ -357,9 +398,11 @@ const App: React.FC = () => {
               <div className="pt-10">
                 <div className="flex items-center gap-3 mb-6">
                   <Calendar className="text-brand-500" size={18} />
-                  <h3 className="text-xs font-bold text-white uppercase tracking-widest">Global Schedule Map</h3>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-widest">
+                    {selectedAgentFilter ? `${allUsers.find(u => u.id === selectedAgentFilter)?.name}'s Schedule` : 'Global Schedule Map'}
+                  </h3>
                 </div>
-                <FollowUpCalendar leads={leads} onLeadClick={(lead) => setSelectedLeadId(lead.id)} onLeadMove={handleLeadMove} />
+                <FollowUpCalendar leads={agentFilteredLeads} onLeadClick={(lead) => setSelectedLeadId(lead.id)} onLeadMove={handleLeadMove} />
               </div>
             </div>
           </div>
