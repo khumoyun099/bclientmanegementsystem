@@ -13,6 +13,7 @@ interface LeadTableProps {
     onPatch: (id: string, updates: Partial<Lead>) => void;
     onDelete?: (id: string) => void;
     showAgentColumn?: boolean;
+    onLeadClick?: (lead: Lead) => void;
 }
 
 const HistoryModal: React.FC<{ lead: Lead; onClose: () => void }> = ({ lead, onClose }) => {
@@ -48,7 +49,7 @@ const HistoryModal: React.FC<{ lead: Lead; onClose: () => void }> = ({ lead, onC
     );
 };
 
-const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate, onPatch, onDelete, colWidths }: any) => {
+const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate, onPatch, onDelete, onLeadClick, colWidths }: any) => {
     const [showHistory, setShowHistory] = useState(false);
     const [showCloseModal, setShowCloseModal] = useState(false);
     const [localNote, setLocalNote] = useState('');
@@ -202,7 +203,12 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
     return (
         <tr className="hover:bg-white/[0.01] transition-colors border-none group">
             <td className="px-2 py-1.5 overflow-hidden" style={{ width: colWidths.opportunity }}>
-                <span className="text-sm font-bold text-white tracking-tight block truncate">{lead.name}</span>
+                <button
+                    onClick={() => onLeadClick && onLeadClick(lead)}
+                    className="text-sm font-bold text-white tracking-tight block truncate hover:text-brand-400 transition-colors cursor-pointer text-left w-full"
+                >
+                    {lead.name}
+                </button>
             </td>
 
             <td className="px-2 py-1.5 overflow-hidden text-center" style={{ width: colWidths.asset }}>
@@ -335,7 +341,7 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
     );
 });
 
-export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentUser, onUpdate, onPatch, onDelete, showAgentColumn }) => {
+export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentUser, onUpdate, onPatch, onDelete, showAgentColumn, onLeadClick }) => {
     // Column widths state for Notion-style resizing
     const [colWidths, setColWidths] = useState<Record<string, number>>({
         opportunity: 140,
@@ -454,6 +460,7 @@ export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentU
                                 onUpdate={onUpdate}
                                 onPatch={onPatch}
                                 onDelete={onDelete}
+                                onLeadClick={onLeadClick}
                                 colWidths={colWidths}
                             />
                         ))}

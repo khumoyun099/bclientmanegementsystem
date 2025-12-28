@@ -14,7 +14,16 @@ import { DatabaseSetup } from './components/DatabaseSetup';
 import { TeamStatsPage } from './components/TeamStatsPage';
 import { Dashboard } from './components/Dashboard';
 import { MyTasks } from './components/MyTasks';
-import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap, AlertTriangle, Copy, Check } from 'lucide-react';
+import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap, AlertTriangle, Copy, Check, Link, ChevronDown, X, ExternalLink } from 'lucide-react';
+
+// Useful Links types and storage
+interface UsefulLink {
+  id: string;
+  name: string;
+  url: string;
+}
+
+const USEFUL_LINKS_STORAGE_KEY = 'followup_useful_links';
 
 // Configuration Required Screen
 const ConfigurationRequired: React.FC = () => {
@@ -123,6 +132,46 @@ const App: React.FC = () => {
   });
 
   const [selectedAgentFilter, setSelectedAgentFilter] = useState<string | null>(null);
+
+  // Useful Links state
+  const [usefulLinks, setUsefulLinks] = useState<UsefulLink[]>(() => {
+    try {
+      const stored = localStorage.getItem(USEFUL_LINKS_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showUsefulLinksDropdown, setShowUsefulLinksDropdown] = useState(false);
+  const [showAddLinkModal, setShowAddLinkModal] = useState(false);
+  const [newLinkName, setNewLinkName] = useState('');
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+
+  // Save useful links to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(USEFUL_LINKS_STORAGE_KEY, JSON.stringify(usefulLinks));
+    } catch (e) {
+      console.warn('Failed to save useful links');
+    }
+  }, [usefulLinks]);
+
+  const handleAddUsefulLink = () => {
+    if (!newLinkName.trim() || !newLinkUrl.trim()) return;
+    const newLink: UsefulLink = {
+      id: Date.now().toString(),
+      name: newLinkName.trim(),
+      url: newLinkUrl.trim().startsWith('http') ? newLinkUrl.trim() : `https://${newLinkUrl.trim()}`
+    };
+    setUsefulLinks(prev => [...prev, newLink]);
+    setNewLinkName('');
+    setNewLinkUrl('');
+    setShowAddLinkModal(false);
+  };
+
+  const handleDeleteUsefulLink = (id: string) => {
+    setUsefulLinks(prev => prev.filter(link => link.id !== id));
+  };
 
   useEffect(() => {
     try {
@@ -247,12 +296,12 @@ const App: React.FC = () => {
     let filtered = agentFilteredLeads;
     const today = getTodayString();
 
-    if (currentUser?.role === Role.AGENT) {
-      if ([LeadStatus.HOT, LeadStatus.WARM, LeadStatus.COLD, LeadStatus.PROGRESSIVE].includes(activeTab as LeadStatus)) {
-        filtered = filtered.filter(l =>
-          l.todo !== TodoStatus.FOLLOWUP || l.follow_up_date <= today
-        );
-      }
+    // Apply scheduled leads filter for both AGENT and ADMIN
+    // When todo is FOLLOWUP and date is in the future, hide the lead until that date
+    if ([LeadStatus.HOT, LeadStatus.WARM, LeadStatus.COLD, LeadStatus.PROGRESSIVE].includes(activeTab as LeadStatus)) {
+      filtered = filtered.filter(l =>
+        l.todo !== TodoStatus.FOLLOWUP || l.follow_up_date <= today
+      );
     }
 
     const safeTab = (activeTab || '').toLowerCase();
@@ -261,9 +310,8 @@ const App: React.FC = () => {
     // Sort Progressive tab by frequency (ascending - lower days first)
     if (activeTab === LeadStatus.PROGRESSIVE) {
       return filteredByTab.sort((a, b) => {
-        // Extract numeric values from frequency strings like "5days", "10days"
-        const getFrequencyValue = (every: string | null) => {
-          if (!every || every.toUpperCase() === 'MANUAL') return 0; // MANUAL = 0 (comes first)
+        const getFrequencyValue = (every: string | null | undefined) => {
+          if (!every || every.toUpperCase() === 'MANUAL') return 0;
           const match = every.match(/(\d+)/);
           return match ? parseInt(match[1]) : 999;
         };
@@ -271,12 +319,21 @@ const App: React.FC = () => {
         const aValue = getFrequencyValue(a.every);
         const bValue = getFrequencyValue(b.every);
 
-        return aValue - bValue; // Ascending order
+        return aValue - bValue;
+      });
+    }
+
+    // Sort by agent name for admin view (group leads by agent)
+    if (currentUser?.role === Role.ADMIN && !selectedAgentFilter) {
+      return filteredByTab.sort((a, b) => {
+        const agentA = (a.assigned_agent_name || '').toLowerCase();
+        const agentB = (b.assigned_agent_name || '').toLowerCase();
+        return agentA.localeCompare(agentB);
       });
     }
 
     return filteredByTab;
-  }, [agentFilteredLeads, activeTab, currentUser]);
+  }, [agentFilteredLeads, activeTab, currentUser, selectedAgentFilter]);
 
   const currentSelectedLead = useMemo(() => {
     if (!Array.isArray(leads)) return null;
@@ -332,7 +389,7 @@ const App: React.FC = () => {
 
               {/* Admin Agent Filter Dropdown */}
               {currentUser.role === Role.ADMIN && (
-                <div className="flex items-center gap-3 p-4 bg-white/[0.02] border border-white/5 rounded-xl">
+                <div className="flex items-center gap-3 p-4 bg-white/[0.02] border border-white/5 rounded-xl flex-wrap">
                   <Users size={16} className="text-brand-500" />
                   <span className="text-xs font-bold text-muted uppercase tracking-widest">View as Agent:</span>
                   <select
@@ -358,6 +415,61 @@ const App: React.FC = () => {
                       Clear
                     </button>
                   )}
+
+                  {/* Useful Links Dropdown */}
+                  <div className="relative ml-auto">
+                    <button
+                      onClick={() => setShowUsefulLinksDropdown(!showUsefulLinksDropdown)}
+                      className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white hover:bg-white/10 transition-all"
+                    >
+                      <Link size={14} className="text-brand-500" />
+                      <span className="text-xs font-bold uppercase tracking-widest">Useful Links</span>
+                      <ChevronDown size={14} className={`text-muted transition-transform ${showUsefulLinksDropdown ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {showUsefulLinksDropdown && (
+                      <div className="absolute top-full right-0 mt-2 w-64 glass border border-white/10 rounded-xl shadow-2xl p-2 z-[60] animate-scale-in">
+                        <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                          {usefulLinks.length === 0 ? (
+                            <p className="text-xs text-muted text-center py-4">No links added yet</p>
+                          ) : (
+                            usefulLinks.map(link => (
+                              <div key={link.id} className="flex items-center gap-2 group">
+                                <a
+                                  href={link.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium text-muted hover:text-white hover:bg-white/5 transition-all"
+                                  onClick={() => setShowUsefulLinksDropdown(false)}
+                                >
+                                  <ExternalLink size={12} />
+                                  {link.name}
+                                </a>
+                                <button
+                                  onClick={() => handleDeleteUsefulLink(link.id)}
+                                  className="opacity-0 group-hover:opacity-100 p-1.5 text-muted hover:text-red-400 hover:bg-red-400/10 rounded transition-all"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        <div className="border-t border-white/5 mt-2 pt-2">
+                          <button
+                            onClick={() => {
+                              setShowUsefulLinksDropdown(false);
+                              setShowAddLinkModal(true);
+                            }}
+                            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold text-brand-500 hover:bg-brand-500/10 transition-all"
+                          >
+                            <Plus size={14} />
+                            Add More Links
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -393,6 +505,7 @@ const App: React.FC = () => {
                 onPatch={patchLeadLocally}
                 onDelete={handleDeleteLead}
                 showAgentColumn={currentUser.role === Role.ADMIN}
+                onLeadClick={(lead) => setSelectedLeadId(lead.id)}
               />
 
               <div className="pt-10">
@@ -437,6 +550,60 @@ const App: React.FC = () => {
           onUpdate={refreshData}
           onPatch={patchLeadLocally}
         />
+      )}
+
+      {/* Add Useful Link Modal */}
+      {showAddLinkModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowAddLinkModal(false)}>
+          <div className="bg-[#111] shadow-2xl w-full max-w-md overflow-hidden animate-scale-in border border-white/10 rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
+              <h3 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
+                <Link size={16} className="text-brand-500" />
+                Add New Link
+              </h3>
+              <button onClick={() => setShowAddLinkModal(false)} className="text-muted hover:text-white transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-xs font-bold text-muted uppercase tracking-widest mb-2 block">Link Name</label>
+                <input
+                  type="text"
+                  value={newLinkName}
+                  onChange={(e) => setNewLinkName(e.target.value)}
+                  placeholder="e.g., Customer Support Schedule"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all placeholder:text-muted"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-muted uppercase tracking-widest mb-2 block">URL</label>
+                <input
+                  type="text"
+                  value={newLinkUrl}
+                  onChange={(e) => setNewLinkUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/..."
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all placeholder:text-muted"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 bg-white/[0.02] border-t border-white/5 flex justify-end gap-3">
+              <button
+                onClick={() => setShowAddLinkModal(false)}
+                className="px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddUsefulLink}
+                disabled={!newLinkName.trim() || !newLinkUrl.trim()}
+                className="px-5 py-2 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold rounded-lg shadow-lg shadow-brand-500/20 transition-all"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Layout>
   );

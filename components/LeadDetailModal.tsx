@@ -145,6 +145,42 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ lead, currentU
     return isNaN(d.getTime()) ? 'N/A' : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
   };
 
+  const formatRelativeTime = (dateStr: string | undefined) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    
+    const timeStr = d.toLocaleString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+    const dateFormatted = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    
+    let relativeStr = '';
+    if (diffDays === 0) {
+      if (diffHours === 0) {
+        relativeStr = diffMinutes <= 1 ? 'Just now' : `${diffMinutes} minutes ago`;
+      } else {
+        relativeStr = diffHours === 1 ? '1 hour ago' : `${diffHours} hours ago`;
+      }
+    } else if (diffDays === 1) {
+      relativeStr = 'Yesterday';
+    } else if (diffDays < 7) {
+      relativeStr = `${diffDays} days ago`;
+    } else if (diffDays < 30) {
+      const weeks = Math.floor(diffDays / 7);
+      relativeStr = weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
+    } else {
+      const months = Math.floor(diffDays / 30);
+      relativeStr = months === 1 ? '1 month ago' : `${months} months ago`;
+    }
+    
+    return `Added ${relativeStr} on ${dateFormatted} at ${timeStr}`;
+  };
+
   const showEveryField = [LeadStatus.WARM, LeadStatus.COLD, LeadStatus.PROGRESSIVE].includes(editStatus);
   const inputClass = "block w-full text-sm bg-[#2f2f2f] border border-[#3f3f3f] rounded-md shadow-sm p-2 text-gray-200 focus:ring-brand-500 focus:border-brand-500 placeholder-gray-500 disabled:opacity-50";
   const labelClass = "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block";
@@ -173,14 +209,19 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ lead, currentU
                     </a>
                 )}
              </div>
-             <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
-                ID: {lead.id} <span className="text-gray-600">•</span> Assigned: {lead.assigned_agent_name}
+             <div className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+                <span>Assigned: {lead.assigned_agent_name}</span>
                 {lead.deletionRequest && (
                     <span className="bg-red-500/10 text-red-400 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border border-red-500/20">
                         DELETION {lead.deletionRequest.status.toUpperCase()}
                     </span>
                 )}
              </div>
+             {lead.created_at && (
+               <div className="text-[10px] text-brand-400 mt-2 px-2 py-1 bg-brand-500/10 rounded-md inline-block border border-brand-500/20">
+                 {formatRelativeTime(lead.created_at)}
+               </div>
+             )}
           </div>
           <button onClick={onClose} disabled={saving} className="text-gray-500 hover:text-gray-300 transition-colors ml-4">
             <X size={24} />
