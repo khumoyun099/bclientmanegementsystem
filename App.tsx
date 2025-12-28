@@ -387,7 +387,7 @@ const App: React.FC = () => {
                 </button>
               </div>
 
-              {/* Admin Agent Filter Dropdown */}
+              {/* Admin Agent Filter Dropdown + Useful Links (for Admin) */}
               {currentUser.role === Role.ADMIN && (
                 <div className="flex items-center gap-3 p-4 bg-white/[0.02] border border-white/5 rounded-xl flex-wrap">
                   <Users size={16} className="text-brand-500" />
@@ -418,6 +418,65 @@ const App: React.FC = () => {
 
                   {/* Useful Links Dropdown */}
                   <div className="relative ml-auto">
+                    <button
+                      onClick={() => setShowUsefulLinksDropdown(!showUsefulLinksDropdown)}
+                      className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white hover:bg-white/10 transition-all"
+                    >
+                      <Link size={14} className="text-brand-500" />
+                      <span className="text-xs font-bold uppercase tracking-widest">Useful Links</span>
+                      <ChevronDown size={14} className={`text-muted transition-transform ${showUsefulLinksDropdown ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {showUsefulLinksDropdown && (
+                      <div className="absolute top-full right-0 mt-2 w-64 glass border border-white/10 rounded-xl shadow-2xl p-2 z-[60] animate-scale-in">
+                        <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                          {usefulLinks.length === 0 ? (
+                            <p className="text-xs text-muted text-center py-4">No links added yet</p>
+                          ) : (
+                            usefulLinks.map(link => (
+                              <div key={link.id} className="flex items-center gap-2 group">
+                                <a
+                                  href={link.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium text-muted hover:text-white hover:bg-white/5 transition-all"
+                                  onClick={() => setShowUsefulLinksDropdown(false)}
+                                >
+                                  <ExternalLink size={12} />
+                                  {link.name}
+                                </a>
+                                <button
+                                  onClick={() => handleDeleteUsefulLink(link.id)}
+                                  className="opacity-0 group-hover:opacity-100 p-1.5 text-muted hover:text-red-400 hover:bg-red-400/10 rounded transition-all"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        <div className="border-t border-white/5 mt-2 pt-2">
+                          <button
+                            onClick={() => {
+                              setShowUsefulLinksDropdown(false);
+                              setShowAddLinkModal(true);
+                            }}
+                            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold text-brand-500 hover:bg-brand-500/10 transition-all"
+                          >
+                            <Plus size={14} />
+                            Add More Links
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Useful Links Dropdown (for Agents) */}
+              {currentUser.role === Role.AGENT && (
+                <div className="flex items-center justify-end p-4 bg-white/[0.02] border border-white/5 rounded-xl">
+                  <div className="relative">
                     <button
                       onClick={() => setShowUsefulLinksDropdown(!showUsefulLinksDropdown)}
                       className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white hover:bg-white/10 transition-all"
