@@ -104,21 +104,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ leads, currentUser, onUpda
             <p className="text-[11px] text-muted">New leads added to CRM over time.</p>
           </div>
 
-          <div className="flex-1 flex flex-col justify-center gap-6">
+          <div className="flex-1 flex flex-col justify-center gap-4">
             {[
-              { label: 'Last 5 Days', days: 5, color: 'text-brand-500', bg: 'bg-brand-500/10', border: 'border-brand-500/20' },
-              { label: 'Last 10 Days', days: 10, color: 'text-white', bg: 'bg-white/5', border: 'border-white/10' },
-              { label: 'Last 15 Days', days: 15, color: 'text-muted', bg: 'bg-white/5', border: 'border-white/5' }
+              { label: 'Today', days: 0, color: 'text-brand-500', bg: 'bg-brand-500/10', border: 'border-brand-500/20' },
+              { label: 'Last 3 Days', days: 3, color: 'text-white', bg: 'bg-white/5', border: 'border-white/10' },
+              { label: 'Last 6 Days', days: 6, color: 'text-white', bg: 'bg-white/5', border: 'border-white/10' },
+              { label: 'Last 10 Days', days: 10, color: 'text-muted', bg: 'bg-white/5', border: 'border-white/5' }
             ].map(stat => {
               const count = leads.filter(l => {
                 const date = new Date(l.created_at);
                 const cutoff = new Date();
-                cutoff.setDate(cutoff.getDate() - stat.days);
+                if (stat.days === 0) {
+                  // Today: compare just the date part
+                  cutoff.setHours(0, 0, 0, 0);
+                } else {
+                  cutoff.setDate(cutoff.getDate() - stat.days);
+                }
                 return date >= cutoff;
               }).length;
 
               return (
-                <div key={stat.days} className={`flex items-center justify-between p-3 rounded-lg border ${stat.border} ${stat.bg}`}>
+                <div key={stat.label} className={`flex items-center justify-between p-3 rounded-lg border ${stat.border} ${stat.bg}`}>
                   <span className="text-xs font-bold text-muted uppercase tracking-wider">{stat.label}</span>
                   <span className={`text-xl font-black ${stat.color}`}>{count}</span>
                 </div>
