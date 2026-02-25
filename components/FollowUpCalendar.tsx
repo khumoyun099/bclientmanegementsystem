@@ -36,14 +36,20 @@ export const FollowUpCalendar: React.FC<FollowUpCalendarProps> = ({ leads, onLea
     setCurrentDate(new Date());
   };
 
-  // Group leads by date
+  // Group leads by date (excluding cold, closed, and sold clients)
   const leadsByDate = useMemo(() => {
     const groups: Record<string, Lead[]> = {};
-    leads.forEach(lead => {
+    leads
+      .filter(lead => {
+        const status = (lead.status || '').toLowerCase();
+        // Exclude cold, closed, and sold clients from calendar view
+        return status !== 'cold' && status !== 'closed' && status !== 'sold';
+      })
+      .forEach(lead => {
         const date = lead.follow_up_date; // YYYY-MM-DD
         if (!groups[date]) groups[date] = [];
         groups[date].push(lead);
-    });
+      });
     return groups;
   }, [leads]);
 

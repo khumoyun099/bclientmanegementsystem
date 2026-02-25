@@ -132,6 +132,9 @@ const App: React.FC = () => {
   });
 
   const [selectedAgentFilter, setSelectedAgentFilter] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Useful Links state
   const [usefulLinks, setUsefulLinks] = useState<UsefulLink[]>(() => {
@@ -283,14 +286,27 @@ const App: React.FC = () => {
     await supabase.auth.signOut();
   };
 
-  // Filter leads by selected agent (for admin view)
+  // Filter leads by selected agent (for admin view), date range, and search
   const agentFilteredLeads = useMemo(() => {
-    const safeLeads = Array.isArray(leads) ? leads : [];
+    let result = Array.isArray(leads) ? leads : [];
     if (currentUser?.role === Role.ADMIN && selectedAgentFilter) {
-      return safeLeads.filter(l => l.assigned_agent_id === selectedAgentFilter);
+      result = result.filter(l => l.assigned_agent_id === selectedAgentFilter);
     }
-    return safeLeads;
-  }, [leads, currentUser, selectedAgentFilter]);
+    if (dateFrom) {
+      result = result.filter(l => l.created_at && l.created_at.slice(0, 10) >= dateFrom);
+    }
+    if (dateTo) {
+      result = result.filter(l => l.created_at && l.created_at.slice(0, 10) <= dateTo);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter(l =>
+        (l.name && l.name.toLowerCase().includes(q)) ||
+        (l.link && l.link.toLowerCase().includes(q))
+      );
+    }
+    return result;
+  }, [leads, currentUser, selectedAgentFilter, dateFrom, dateTo, searchQuery]);
 
   const tableLeads = useMemo(() => {
     let filtered = agentFilteredLeads;
@@ -368,12 +384,12 @@ const App: React.FC = () => {
         )}
 
         {activePage === 'crm' && (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 animate-fade-in h-full">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 animate-fade-in h-full">
             <div className="lg:col-span-1 h-full">
               <MyTasks user={currentUser} />
             </div>
 
-            <div className="lg:col-span-3 space-y-8">
+            <div className="lg:col-span-4 space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-1">
                   <h2 className="text-3xl font-bold text-white tracking-tight uppercase font-sans">My Space</h2>
@@ -389,13 +405,13 @@ const App: React.FC = () => {
 
               {/* Admin Agent Filter Dropdown + Useful Links (for Admin) */}
               {currentUser.role === Role.ADMIN && (
-                <div className="flex items-center gap-3 p-4 bg-white/[0.02] border border-white/5 rounded-xl flex-wrap">
-                  <Users size={16} className="text-brand-500" />
-                  <span className="text-xs font-bold text-muted uppercase tracking-widest">View as Agent:</span>
+                <div className="flex items-center gap-2 p-3 bg-white/[0.02] border border-white/5 rounded-xl flex-wrap">
+                  <Users size={14} className="text-brand-500 shrink-0" />
+                  <span className="text-[10px] font-bold text-muted uppercase tracking-widest whitespace-nowrap">Agent:</span>
                   <select
                     value={selectedAgentFilter || ''}
                     onChange={(e) => setSelectedAgentFilter(e.target.value || null)}
-                    className="flex-1 max-w-xs bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all cursor-pointer"
+                    className="w-40 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all cursor-pointer"
                   >
                     <option value="" className="bg-[#111]">All Agents</option>
                     {allUsers
@@ -410,7 +426,34 @@ const App: React.FC = () => {
                   {selectedAgentFilter && (
                     <button
                       onClick={() => setSelectedAgentFilter(null)}
-                      className="px-3 py-1.5 text-xs font-bold text-muted hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all"
+                      className="px-2 py-1.5 text-[10px] font-bold text-muted hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all whitespace-nowrap"
+                    >
+                      Clear
+                    </button>
+                  )}
+
+                  <div className="w-px h-5 bg-white/10 mx-0.5 shrink-0" />
+
+                  {/* Date Range Filter */}
+                  <Calendar size={14} className="text-brand-500 shrink-0" />
+                  <span className="text-[10px] font-bold text-muted uppercase tracking-widest whitespace-nowrap">From:</span>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="w-36 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all cursor-pointer [color-scheme:dark]"
+                  />
+                  <span className="text-[10px] font-bold text-muted uppercase tracking-widest whitespace-nowrap">To:</span>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="w-36 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all cursor-pointer [color-scheme:dark]"
+                  />
+                  {(dateFrom || dateTo) && (
+                    <button
+                      onClick={() => { setDateFrom(''); setDateTo(''); }}
+                      className="px-2 py-1.5 text-[10px] font-bold text-muted hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all whitespace-nowrap"
                     >
                       Clear
                     </button>
@@ -473,10 +516,33 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              {/* Useful Links Dropdown (for Agents) */}
+              {/* Date Range Filter + Useful Links (for Agents) */}
               {currentUser.role === Role.AGENT && (
-                <div className="flex items-center justify-end p-4 bg-white/[0.02] border border-white/5 rounded-xl">
-                  <div className="relative">
+                <div className="flex items-center gap-2 p-3 bg-white/[0.02] border border-white/5 rounded-xl flex-wrap">
+                  <Calendar size={14} className="text-brand-500 shrink-0" />
+                  <span className="text-[10px] font-bold text-muted uppercase tracking-widest whitespace-nowrap">From:</span>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="w-36 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all cursor-pointer [color-scheme:dark]"
+                  />
+                  <span className="text-[10px] font-bold text-muted uppercase tracking-widest whitespace-nowrap">To:</span>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="w-36 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all cursor-pointer [color-scheme:dark]"
+                  />
+                  {(dateFrom || dateTo) && (
+                    <button
+                      onClick={() => { setDateFrom(''); setDateTo(''); }}
+                      className="px-2 py-1.5 text-[10px] font-bold text-muted hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all whitespace-nowrap"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <div className="relative ml-auto">
                     <button
                       onClick={() => setShowUsefulLinksDropdown(!showUsefulLinksDropdown)}
                       className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white hover:bg-white/10 transition-all"
@@ -531,6 +597,26 @@ const App: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {/* Search Bar */}
+              <div className="relative">
+                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search by client name or CRM link..."
+                  className="w-full bg-white/[0.03] border border-white/5 rounded-xl pl-11 pr-10 py-3 text-sm text-white placeholder-muted outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted hover:text-white rounded-md hover:bg-white/10 transition-all"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
 
               <div className="flex items-center gap-4">
                 <nav className="flex-1 flex space-x-1 p-1 bg-white/[0.03] rounded-xl border border-white/5 overflow-x-auto custom-scrollbar">

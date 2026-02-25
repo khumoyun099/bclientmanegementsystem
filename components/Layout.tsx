@@ -34,7 +34,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, user, activePage, onNa
   return (
     <div className="min-h-screen mesh-bg flex flex-col font-sans">
       <header className="fixed top-0 w-full z-50 border-b border-white/10 glass">
-        <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-[1920px] mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8 h-full">
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => onNavigate('dashboard')}>
               <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-black shadow-lg">
@@ -110,7 +110,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, user, activePage, onNa
           </div>
         </div>
       </header>
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-6 pt-32 pb-20">
+      <main className="flex-1 max-w-[1920px] w-full mx-auto px-4 pt-32 pb-20">
         {children}
       </main>
       <footer className="py-8 border-t border-white/5 text-center">
