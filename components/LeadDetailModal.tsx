@@ -4,6 +4,7 @@ import { Lead, Role, TodoStatus, LeadStatus, EveryFreq, User } from '../types';
 // Added Loader2 to the imports from lucide-react
 import { X, ExternalLink, Trash2, Save, Loader2 } from 'lucide-react';
 import { db, getTodayString } from '../services/db';
+import toast from 'react-hot-toast';
 
 interface LeadDetailModalProps {
   lead: Lead;
@@ -107,33 +108,31 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ lead, currentU
         }
 
         // Step 3: Success handling
-        // We close the modal immediately to feel fast
+        toast.success("Lead updated.");
         onClose();
-        
-        // Step 4: Background Refresh (with small delay to allow DB consistency)
-        setTimeout(() => {
-            onUpdate();
-        }, 600);
+        setTimeout(() => { onUpdate(); }, 600);
 
     } catch (err) {
         console.error("Save failed:", err);
-        alert("Changes could not be saved. Reverting...");
-        onUpdate(); // Refresh to original state on failure
+        toast.error("Changes could not be saved. Reverting...");
+        onUpdate();
     } finally {
         setSaving(false);
     }
   };
 
   const handleRequestDeletion = () => {
-    if (confirm('Are you sure you want to request deletion for this lead?')) {
+    if (window.confirm('Are you sure you want to request deletion for this lead?')) {
       db.requestDeletion(lead.id, currentUser);
+      toast.success("Deletion request submitted.");
       onUpdate();
     }
   };
 
   const handleDeleteDirectly = () => {
-      if (confirm('ADMIN: Are you sure you want to permanently delete this lead?')) {
+      if (window.confirm('ADMIN: Are you sure you want to permanently delete this lead?')) {
           db.handleDeletionRequest(lead.id, true);
+          toast.success("Lead deleted.");
           onUpdate();
           onClose();
       }

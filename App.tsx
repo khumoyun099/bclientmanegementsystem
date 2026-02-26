@@ -1,9 +1,11 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Toaster } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 import { Layout } from './components/Layout';
 import { db, getTodayString } from './services/db';
 import { supabase, isSupabaseConfigured } from './services/supabase';
-import { User, Lead, Role, LeadStatus, ActivityLog, TodoStatus } from './types';
+import { User, Lead, Role, LeadStatus, ActivityLog, TodoStatus, UsefulLink } from './types';
 import { LeadTable } from './components/LeadTable';
 import { AddLeadModal } from './components/AddLeadModal';
 import { AccountabilityDashboard } from './components/AccountabilityDashboard';
@@ -14,16 +16,8 @@ import { DatabaseSetup } from './components/DatabaseSetup';
 import { TeamStatsPage } from './components/TeamStatsPage';
 import { Dashboard } from './components/Dashboard';
 import { MyTasks } from './components/MyTasks';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap, AlertTriangle, Copy, Check, Link, ChevronDown, X, ExternalLink } from 'lucide-react';
-
-// Useful Links types and storage
-interface UsefulLink {
-  id: string;
-  name: string;
-  url: string;
-}
-
-const USEFUL_LINKS_STORAGE_KEY = 'followup_useful_links';
 
 // Configuration Required Screen
 const ConfigurationRequired: React.FC = () => {
@@ -137,43 +131,40 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Useful Links state
-  const [usefulLinks, setUsefulLinks] = useState<UsefulLink[]>(() => {
-    try {
-      const stored = localStorage.getItem(USEFUL_LINKS_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [usefulLinks, setUsefulLinks] = useState<UsefulLink[]>([]);
   const [showUsefulLinksDropdown, setShowUsefulLinksDropdown] = useState(false);
   const [showAddLinkModal, setShowAddLinkModal] = useState(false);
   const [newLinkName, setNewLinkName] = useState('');
   const [newLinkUrl, setNewLinkUrl] = useState('');
 
-  // Save useful links to localStorage
+  // Fetch useful links from Supabase
   useEffect(() => {
-    try {
-      localStorage.setItem(USEFUL_LINKS_STORAGE_KEY, JSON.stringify(usefulLinks));
-    } catch (e) {
-      console.warn('Failed to save useful links');
-    }
-  }, [usefulLinks]);
+    if (!currentUser) return;
+    db.getUsefulLinks(currentUser.id).then(setUsefulLinks).catch(() => {});
+  }, [currentUser?.id]);
 
-  const handleAddUsefulLink = () => {
-    if (!newLinkName.trim() || !newLinkUrl.trim()) return;
-    const newLink: UsefulLink = {
-      id: Date.now().toString(),
-      name: newLinkName.trim(),
-      url: newLinkUrl.trim().startsWith('http') ? newLinkUrl.trim() : `https://${newLinkUrl.trim()}`
-    };
-    setUsefulLinks(prev => [...prev, newLink]);
+  const handleAddUsefulLink = async () => {
+    if (!newLinkName.trim() || !newLinkUrl.trim() || !currentUser) return;
+    const url = newLinkUrl.trim().startsWith('http') ? newLinkUrl.trim() : `https://${newLinkUrl.trim()}`;
     setNewLinkName('');
     setNewLinkUrl('');
     setShowAddLinkModal(false);
+    try {
+      const newLink = await db.addUsefulLink(currentUser.id, newLinkName.trim(), url);
+      setUsefulLinks(prev => [...prev, newLink]);
+    } catch {
+      toast.error('Failed to save link.');
+    }
   };
 
-  const handleDeleteUsefulLink = (id: string) => {
+  const handleDeleteUsefulLink = async (id: string) => {
     setUsefulLinks(prev => prev.filter(link => link.id !== id));
+    try {
+      await db.deleteUsefulLink(id);
+    } catch {
+      toast.error('Failed to delete link.');
+      db.getUsefulLinks(currentUser!.id).then(setUsefulLinks).catch(() => {});
+    }
   };
 
   useEffect(() => {
@@ -235,7 +226,7 @@ const App: React.FC = () => {
     if (!user) return;
     try {
       setDbError(null);
-      const [leadData, profiles, logs, updatedProfile] = await Promise.all([
+      const [{ data: leadData }, profiles, logs, updatedProfile] = await Promise.all([
         db.getLeads(user),
         user.role === Role.ADMIN ? db.getAllProfiles() : Promise.resolve([]),
         user.role === Role.ADMIN ? db.getActivityLogs() : Promise.resolve([]),
@@ -276,9 +267,10 @@ const App: React.FC = () => {
       await db.deleteLead(leadId);
       setLeads(prev => prev.filter(l => l.id !== leadId));
       if (selectedLeadId === leadId) setSelectedLeadId(null);
+      toast.success('Lead deleted.');
     } catch (err) {
       console.error("Failed to delete lead:", err);
-      alert("Failed to delete lead. Check console for details.");
+      toast.error('Failed to delete lead.');
     }
   }, [selectedLeadId]);
 
@@ -380,7 +372,9 @@ const App: React.FC = () => {
       <div className="space-y-12 h-full">
 
         {activePage === 'dashboard' && (
-          <Dashboard leads={leads} currentUser={currentUser} onUpdate={() => refreshData()} />
+          <ErrorBoundary>
+            <Dashboard leads={leads} currentUser={currentUser} onUpdate={() => refreshData()} isLoading={loading} />
+          </ErrorBoundary>
         )}
 
         {activePage === 'crm' && (
@@ -642,16 +636,18 @@ const App: React.FC = () => {
                 </nav>
               </div>
 
-              <LeadTable
-                leads={tableLeads}
-                activeTab={activeTab as LeadStatus}
-                currentUser={currentUser}
-                onUpdate={refreshData}
-                onPatch={patchLeadLocally}
-                onDelete={handleDeleteLead}
-                showAgentColumn={currentUser.role === Role.ADMIN}
-                onLeadClick={(lead) => setSelectedLeadId(lead.id)}
-              />
+              <ErrorBoundary>
+                <LeadTable
+                  leads={tableLeads}
+                  activeTab={activeTab as LeadStatus}
+                  currentUser={currentUser}
+                  onUpdate={refreshData}
+                  onPatch={patchLeadLocally}
+                  onDelete={handleDeleteLead}
+                  showAgentColumn={currentUser.role === Role.ADMIN}
+                  onLeadClick={(lead) => setSelectedLeadId(lead.id)}
+                />
+              </ErrorBoundary>
 
               <div className="pt-10">
                 <div className="flex items-center gap-3 mb-6">
@@ -660,7 +656,9 @@ const App: React.FC = () => {
                     {selectedAgentFilter ? `${allUsers.find(u => u.id === selectedAgentFilter)?.name}'s Schedule` : 'Global Schedule Map'}
                   </h3>
                 </div>
-                <FollowUpCalendar leads={agentFilteredLeads} onLeadClick={(lead) => setSelectedLeadId(lead.id)} onLeadMove={handleLeadMove} />
+                <ErrorBoundary>
+                  <FollowUpCalendar leads={agentFilteredLeads} onLeadClick={(lead) => setSelectedLeadId(lead.id)} onLeadMove={handleLeadMove} />
+                </ErrorBoundary>
               </div>
             </div>
           </div>
@@ -678,9 +676,13 @@ const App: React.FC = () => {
               </button>
             </div>
 
-            <AccountabilityDashboard users={allUsers} leads={leads} logs={activityLogs} onSelectLead={(lead) => setSelectedLeadId(lead.id)} onRefresh={refreshData} />
+            <ErrorBoundary>
+              <AccountabilityDashboard users={allUsers} leads={leads} logs={activityLogs} onSelectLead={(lead) => setSelectedLeadId(lead.id)} onRefresh={refreshData} />
+            </ErrorBoundary>
             <div className="pt-10">
-              <TeamStatsPage currentUser={currentUser} />
+              <ErrorBoundary>
+                <TeamStatsPage currentUser={currentUser} />
+              </ErrorBoundary>
             </div>
           </div>
         )}
@@ -750,6 +752,7 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+      <Toaster position="top-right" toastOptions={{ style: { background: '#111', color: '#fff', border: '1px solid rgba(255,255,255,0.1)' } }} />
     </Layout>
   );
 };

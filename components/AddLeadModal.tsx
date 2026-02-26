@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { TodoStatus, LeadStatus, EveryFreq, User } from '../types';
 import { db, getTodayString } from '../services/db';
 import { X, Loader2, AlertCircle } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 interface AddLeadModalProps {
   currentUser: User;
@@ -42,6 +43,7 @@ export const AddLeadModal: React.FC<AddLeadModalProps> = ({ currentUser, onClose
         await db.addNote(newLead.id, initialNote, currentUser);
       }
 
+      toast.success("Lead created successfully.");
       onSuccess();
       onClose();
     } catch (err: any) {

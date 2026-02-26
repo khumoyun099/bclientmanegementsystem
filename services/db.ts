@@ -1,5 +1,5 @@
 
-import { Lead, User, Role, LeadStatus, TodoStatus, ActivityLog, Note, DeletionStatus, PointsHistory, AgentTarget, AgentStats, PersonalTask, PayoutRequest } from '../types';
+import { Lead, User, Role, LeadStatus, TodoStatus, ActivityLog, Note, DeletionStatus, PointsHistory, AgentTarget, AgentStats, PersonalTask, PayoutRequest, UsefulLink } from '../types';
 import { supabase } from './supabase';
 
 export const getTodayString = () => new Date().toISOString().split('T')[0];
@@ -114,17 +114,24 @@ class DBService {
     return data || [];
   }
 
-  async getLeads(user: User): Promise<Lead[]> {
+  async getLeads(user: User, options?: { page?: number; pageSize?: number }): Promise<{ data: Lead[]; count: number }> {
     const exists = await this.checkTableExists('leads');
-    if (!exists) return [];
+    if (!exists) return { data: [], count: 0 };
 
-    let query = supabase.from('leads').select('*, notes(*)');
+    const pageSize = options?.pageSize ?? 10000;
+    const page = options?.page ?? 0;
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase.from('leads').select('*, notes(*)', { count: 'exact' });
     if (user.role === Role.AGENT) {
       query = query.eq('assigned_agent_id', user.id);
     }
-    const { data, error } = await query.order('follow_up_date', { ascending: true });
+    const { data, error, count } = await query
+      .order('follow_up_date', { ascending: true })
+      .range(from, to);
     if (error) throw error;
-    return data || [];
+    return { data: data || [], count: count || 0 };
   }
 
   async addLead(leadData: Partial<Lead>, user: User): Promise<Lead> {
@@ -311,6 +318,79 @@ class DBService {
   async completePersonalTask(taskId: string): Promise<void> {
     const { error } = await supabase.from('personal_tasks').update({ completed: true }).eq('id', taskId);
     if (error) throw error;
+  }
+
+  async getUsefulLinks(userId: string): Promise<UsefulLink[]> {
+    const { data, error } = await supabase
+      .from('useful_links')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+    if (error) {
+      if (error.code === '42P01') return [];
+      throw error;
+    }
+    return data || [];
+  }
+
+  async addUsefulLink(userId: string, name: string, url: string): Promise<UsefulLink> {
+    const { data, error } = await supabase
+      .from('useful_links')
+      .insert({ user_id: userId, name, url })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async deleteUsefulLink(id: string): Promise<void> {
+    const { error } = await supabase.from('useful_links').delete().eq('id', id);
+    if (error) throw error;
+  }
+
+  async bulkReassignLeads(leadIds: string[], newAgentId: string, newAgentName: string, adminId: string, oldAgentName: string): Promise<void> {
+    const { error } = await supabase
+      .from('leads')
+      .update({ assigned_agent_id: newAgentId, assigned_agent_name: newAgentName, updated_at: new Date().toISOString() })
+      .in('id', leadIds);
+    if (error) throw error;
+
+    const logEntries = leadIds.map(leadId => ({
+      lead_id: leadId,
+      agent_id: adminId,
+      action: 'reassigned',
+      details: `Reassigned from ${oldAgentName} to ${newAgentName} by admin`
+    }));
+    await supabase.from('activity_logs').insert(logEntries);
+  }
+
+  async logAdminWarning(agentId: string, warningText: string, adminId: string): Promise<void> {
+    await supabase.from('activity_logs').insert({
+      lead_id: agentId,
+      agent_id: adminId,
+      action: 'admin_warning',
+      details: warningText
+    });
+  }
+
+  async getAgentWarnings(agentId: string): Promise<number> {
+    const { count, error } = await supabase
+      .from('activity_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('lead_id', agentId)
+      .eq('action', 'admin_warning');
+    if (error) return 0;
+    return count || 0;
+  }
+
+  async getFullActivityLogs(): Promise<ActivityLog[]> {
+    const { data, error } = await supabase
+      .from('activity_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(5000);
+    if (error) throw error;
+    return data || [];
   }
 }
 

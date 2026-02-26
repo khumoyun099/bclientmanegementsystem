@@ -3,7 +3,11 @@ import React, { useState, memo, useCallback, useEffect, useRef } from 'react';
 import { Lead, TodoStatus, LeadStatus, EveryFreq, Role, User } from '../types';
 import { TodoBadge } from './Badge';
 import { getTodayString, db } from '../services/db';
-import { ExternalLink, Trash2, Clock, X, ChevronDown, Check, GripVertical } from 'lucide-react';
+import { ExternalLink, Trash2, Clock, X, ChevronDown, Check, GripVertical, ChevronLeft, ChevronRight } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { SkeletonRow } from './Skeleton';
+
+const PAGE_SIZE = 50;
 
 interface LeadTableProps {
     leads: Lead[];
@@ -14,6 +18,7 @@ interface LeadTableProps {
     onDelete?: (id: string) => void;
     showAgentColumn?: boolean;
     onLeadClick?: (lead: Lead) => void;
+    isLoading?: boolean;
 }
 
 const HistoryModal: React.FC<{ lead: Lead; onClose: () => void }> = ({ lead, onClose }) => {
@@ -76,8 +81,7 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
             setTimeout(onUpdate, 5000);
         } catch (err) {
             console.error("Update failed:", err);
-            // On error, refresh to get correct state
-            alert("Update failed. Please try again.");
+            toast.error("Update failed. Please try again.");
             onUpdate();
         }
     };
@@ -89,9 +93,11 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
         if (localNote.trim() !== currentLatestText.trim() && localNote.trim() !== '') {
             try {
                 await db.addNote(lead.id, localNote.trim(), currentUser);
+                toast.success("Note saved.");
                 onUpdate();
             } catch (err) {
                 console.error("Failed to add note:", err);
+                toast.error("Failed to save note.");
             }
         }
     };
@@ -99,7 +105,7 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
     const toggleColdCheck = async (dayIndex: number) => {
         const history = [...(lead.cold_check_history || [])];
         if (history.includes(today)) {
-            alert("Already performed a follow-up today.");
+            toast.error("Already performed a follow-up today.");
             return;
         }
         history.push(today);
@@ -110,8 +116,8 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
             // Don't refresh - let optimistic update persist
         } catch (err) {
             console.error("Cold check update failed:", err);
-            alert("Failed to save checkbox. Please try again.");
-            onUpdate(); // Only refresh on error to restore correct state
+            toast.error("Failed to save checkbox. Please try again.");
+            onUpdate();
         }
     };
 
@@ -124,8 +130,8 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
             // Don't refresh - let optimistic update persist
         } catch (err) {
             console.error("Close failed:", err);
-            alert("Failed to close lead. Please try again.");
-            onUpdate(); // Only refresh on error
+            toast.error("Failed to close lead. Please try again.");
+            onUpdate();
         }
     };
 
@@ -341,7 +347,18 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
     );
 });
 
-export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentUser, onUpdate, onPatch, onDelete, showAgentColumn, onLeadClick }) => {
+export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentUser, onUpdate, onPatch, onDelete, showAgentColumn, onLeadClick, isLoading }) => {
+    const [page, setPage] = useState(0);
+
+    // Reset to page 0 whenever the leads list or active tab changes
+    React.useEffect(() => { setPage(0); }, [leads, activeTab]);
+
+    const totalCount = leads.length;
+    const pageCount = Math.ceil(totalCount / PAGE_SIZE);
+    const pagedLeads = leads.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+    const from = totalCount === 0 ? 0 : page * PAGE_SIZE + 1;
+    const to = Math.min((page + 1) * PAGE_SIZE, totalCount);
+
     // Column widths state for Notion-style resizing
     const [colWidths, setColWidths] = useState<Record<string, number>>({
         opportunity: 140,
@@ -385,7 +402,7 @@ export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentU
         document.body.style.userSelect = 'auto';
     }, [onMouseMove]);
 
-    if (!leads || leads.length === 0) {
+    if (!isLoading && (!leads || leads.length === 0)) {
         return (
             <div className="py-24 text-center dashboard-card flex flex-col items-center justify-center">
                 <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mb-4 border border-white/5">
@@ -450,23 +467,54 @@ export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentU
                 <table className="min-w-full border-collapse table-fixed">
                     {renderHeader()}
                     <tbody className="divide-y divide-white/[0.03]">
-                        {leads.map(lead => (
-                            <LeadRow
-                                key={lead.id}
-                                lead={lead}
-                                activeTab={activeTab}
-                                currentUser={currentUser}
-                                showAgentColumn={showAgentColumn}
-                                onUpdate={onUpdate}
-                                onPatch={onPatch}
-                                onDelete={onDelete}
-                                onLeadClick={onLeadClick}
-                                colWidths={colWidths}
-                            />
-                        ))}
+                        {isLoading
+                            ? Array.from({ length: 10 }).map((_, i) => <SkeletonRow key={i} />)
+                            : pagedLeads.map(lead => (
+                                <LeadRow
+                                    key={lead.id}
+                                    lead={lead}
+                                    activeTab={activeTab}
+                                    currentUser={currentUser}
+                                    showAgentColumn={showAgentColumn}
+                                    onUpdate={onUpdate}
+                                    onPatch={onPatch}
+                                    onDelete={onDelete}
+                                    onLeadClick={onLeadClick}
+                                    colWidths={colWidths}
+                                />
+                            ))
+                        }
                     </tbody>
                 </table>
             </div>
+
+            {/* Pagination controls — only shown when there's more than one page */}
+            {!isLoading && pageCount > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-white/5 bg-white/[0.01]">
+                    <span className="text-[10px] font-bold text-muted uppercase tracking-widest">
+                        Showing {from}–{to} of {totalCount} leads
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setPage(p => Math.max(0, p - 1))}
+                            disabled={page === 0}
+                            className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-muted hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                        >
+                            <ChevronLeft size={14} />
+                        </button>
+                        <span className="text-[10px] font-bold text-white tabular-nums">
+                            {page + 1} / {pageCount}
+                        </span>
+                        <button
+                            onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))}
+                            disabled={page >= pageCount - 1}
+                            className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-muted hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                        >
+                            <ChevronRight size={14} />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

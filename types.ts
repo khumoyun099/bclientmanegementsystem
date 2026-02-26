@@ -63,6 +63,14 @@ export interface PersonalTask {
   created_at: string;
 }
 
+export interface UsefulLink {
+  id: string;
+  name: string;
+  url: string;
+  user_id?: string;
+  created_at?: string;
+}
+
 export interface Note {
   id: string;
   text: string;
@@ -106,7 +114,7 @@ export interface ActivityLog {
   id: string;
   lead_id: string;
   agent_id: string;
-  action: 'note_added' | 'date_changed' | 'status_changed' | 'created' | 'rule_violation';
+  action: 'note_added' | 'date_changed' | 'status_changed' | 'created' | 'rule_violation' | 'reassigned' | 'admin_warning';
   details: string;
   created_at: string;
 }

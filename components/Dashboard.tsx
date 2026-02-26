@@ -3,14 +3,16 @@ import React from 'react';
 import { Lead, LeadStatus, User } from '../types';
 import { TrendingUp, Users, Target, CheckCircle2, ArrowUpRight, ArrowDownRight, Zap, Layers } from 'lucide-react';
 import { PointsDashboard } from './PointsDashboard';
+import { SkeletonCard } from './Skeleton';
 
 interface DashboardProps {
   leads: Lead[];
   currentUser: User;
   onUpdate: () => void;
+  isLoading?: boolean;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ leads, currentUser, onUpdate }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ leads, currentUser, onUpdate, isLoading }) => {
   const totalLeads = leads.length;
   const hotLeads = leads.filter(l => l.status === LeadStatus.HOT).length;
   const soldLeads = leads.filter(l => l.status === LeadStatus.SOLD).length;
@@ -42,34 +44,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ leads, currentUser, onUpda
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Active Leads"
-          value={totalLeads}
-          icon={Users}
-          colorClass="bg-brand-500"
-          description="Total Postgres leads currently tracked in database."
-        />
-        <StatCard
-          title="Priority Hot"
-          value={hotLeads}
-          icon={TrendingUp}
-          colorClass="bg-accent-orange"
-          description="High-intent opportunities requiring immediate action."
-        />
-        <StatCard
-          title="Pipeline Due"
-          value={followUpToday}
-          icon={Target}
-          colorClass="bg-indigo-400"
-          description="Scheduled tasks awaiting server-side completion."
-        />
-        <StatCard
-          title="Conversion"
-          value={soldLeads}
-          icon={CheckCircle2}
-          colorClass="bg-accent-emerald"
-          description="Qualified deals successfully matched in CRM."
-        />
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <StatCard
+              title="Active Leads"
+              value={totalLeads}
+              icon={Users}
+              colorClass="bg-brand-500"
+              description="Total Postgres leads currently tracked in database."
+            />
+            <StatCard
+              title="Priority Hot"
+              value={hotLeads}
+              icon={TrendingUp}
+              colorClass="bg-accent-orange"
+              description="High-intent opportunities requiring immediate action."
+            />
+            <StatCard
+              title="Pipeline Due"
+              value={followUpToday}
+              icon={Target}
+              colorClass="bg-indigo-400"
+              description="Scheduled tasks awaiting server-side completion."
+            />
+            <StatCard
+              title="Conversion"
+              value={soldLeads}
+              icon={CheckCircle2}
+              colorClass="bg-accent-emerald"
+              description="Qualified deals successfully matched in CRM."
+            />
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
