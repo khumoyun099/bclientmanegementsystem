@@ -58,27 +58,27 @@ begin
     if new.status is distinct from old.status then
       insert into public.activity_logs(lead_id, agent_id, action, details)
         values (new.id, v_actor, 'status_changed',
-                format('Status: %s → %s (trigger)', coalesce(old.status,'—'), coalesce(new.status,'—')));
+                format('Status: %s → %s (trigger)', coalesce(old.status::text,'—'), coalesce(new.status::text,'—')));
     end if;
     if new.todo is distinct from old.todo then
       insert into public.activity_logs(lead_id, agent_id, action, details)
         values (new.id, v_actor, 'todo_changed',
-                format('Todo: %s → %s (trigger)', coalesce(old.todo,'—'), coalesce(new.todo,'—')));
+                format('Todo: %s → %s (trigger)', coalesce(old.todo::text,'—'), coalesce(new.todo::text,'—')));
     end if;
     if new.follow_up_date is distinct from old.follow_up_date then
       insert into public.activity_logs(lead_id, agent_id, action, details)
         values (new.id, v_actor, 'date_changed',
-                format('Follow-up date: %s → %s (trigger)', coalesce(old.follow_up_date,'—'), coalesce(new.follow_up_date,'—')));
+                format('Follow-up date: %s → %s (trigger)', coalesce(old.follow_up_date::text,'—'), coalesce(new.follow_up_date::text,'—')));
     end if;
     if new.every is distinct from old.every then
       insert into public.activity_logs(lead_id, agent_id, action, details)
         values (new.id, v_actor, 'frequency_changed',
-                format('Frequency: %s → %s (trigger)', coalesce(old.every,'—'), coalesce(new.every,'—')));
+                format('Frequency: %s → %s (trigger)', coalesce(old.every::text,'—'), coalesce(new.every::text,'—')));
     end if;
     if new.cold_status is distinct from old.cold_status then
       insert into public.activity_logs(lead_id, agent_id, action, details)
         values (new.id, v_actor, 'cold_status_changed',
-                format('Cold status: %s → %s (trigger)', coalesce(old.cold_status,'—'), coalesce(new.cold_status,'—')));
+                format('Cold status: %s → %s (trigger)', coalesce(old.cold_status::text,'—'), coalesce(new.cold_status::text,'—')));
     end if;
     if new.assigned_agent_id is distinct from old.assigned_agent_id then
       insert into public.activity_logs(lead_id, agent_id, action, details)
