@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { TodoStatus, LeadStatus, EveryFreq, User } from '../types';
+import { TodoStatus, LeadStatus, EveryFreq, User, Role } from '../types';
 import { db, getTodayString } from '../services/db';
 import { X, Loader2, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -9,9 +9,12 @@ interface AddLeadModalProps {
   currentUser: User;
   onClose: () => void;
   onSuccess: () => void;
+  // Passed by App.tsx when the current user is admin so they can assign
+  // the new lead to any agent directly instead of creating-then-reassigning.
+  allUsers?: User[];
 }
 
-export const AddLeadModal: React.FC<AddLeadModalProps> = ({ currentUser, onClose, onSuccess }) => {
+export const AddLeadModal: React.FC<AddLeadModalProps> = ({ currentUser, onClose, onSuccess, allUsers }) => {
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
   const [status, setStatus] = useState<LeadStatus>(LeadStatus.HOT);
@@ -22,6 +25,11 @@ export const AddLeadModal: React.FC<AddLeadModalProps> = ({ currentUser, onClose
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isAdmin = currentUser.role === Role.ADMIN;
+  const assignableAgents = (allUsers || []).filter(u => u.role === Role.AGENT);
+  // Default to "assign to me" even for admins — matches existing behavior.
+  const [assignedAgentId, setAssignedAgentId] = useState<string>(currentUser.id);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
@@ -30,6 +38,14 @@ export const AddLeadModal: React.FC<AddLeadModalProps> = ({ currentUser, onClose
     setError(null);
 
     try {
+      // Resolve the assignment target. Admins may assign to any agent;
+      // non-admins (or admin choosing self) own the new lead themselves.
+      let targetAgent: { id: string; name: string } | undefined;
+      if (isAdmin && assignedAgentId && assignedAgentId !== currentUser.id) {
+        const chosen = assignableAgents.find(a => a.id === assignedAgentId);
+        if (chosen) targetAgent = { id: chosen.id, name: chosen.name };
+      }
+
       const newLead = await db.addLead({
         name,
         link,
@@ -37,7 +53,7 @@ export const AddLeadModal: React.FC<AddLeadModalProps> = ({ currentUser, onClose
         todo,
         every,
         follow_up_date: date,
-      }, currentUser);
+      }, currentUser, targetAgent);
 
       if (initialNote.trim() && newLead?.id) {
         await db.addNote(newLead.id, initialNote, currentUser);
@@ -152,6 +168,26 @@ export const AddLeadModal: React.FC<AddLeadModalProps> = ({ currentUser, onClose
                     </div>
                 )}
             </div>
+
+            {isAdmin && assignableAgents.length > 0 && (
+                <div>
+                    <label className={labelClass}>Assign to agent</label>
+                    <select
+                      value={assignedAgentId}
+                      onChange={e => setAssignedAgentId(e.target.value)}
+                      className={inputClass}
+                      disabled={loading}
+                    >
+                        <option value={currentUser.id}>Me ({currentUser.name})</option>
+                        {assignableAgents.map(a => (
+                            <option key={a.id} value={a.id}>{a.name} ({a.email})</option>
+                        ))}
+                    </select>
+                    <p className="text-[10px] text-gray-600 mt-1">
+                        Admin can create leads on behalf of any agent.
+                    </p>
+                </div>
+            )}
 
             <div>
                  <label className={labelClass}>Initial Note</label>

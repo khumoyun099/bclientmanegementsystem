@@ -1,5 +1,14 @@
 
 import { Lead, User, Role, LeadStatus, TodoStatus, ActivityLog, Note, DeletionStatus, PointsHistory, AgentTarget, AgentStats, PersonalTask, PayoutRequest, UsefulLink } from '../types';
+
+// Distinguishes "the DB schema isn't set up" from "the network is flaky".
+// The UI should only fall back to the DatabaseSetup screen for the former.
+export const isSchemaMissingError = (err: any): boolean => {
+  if (!err) return false;
+  if (err.code === '42P01') return true;
+  const msg = String(err.message || err).toLowerCase();
+  return msg.includes('does not exist') || msg.includes('relation') && msg.includes('does not exist');
+};
 import { supabase } from './supabase';
 
 export const getTodayString = () => new Date().toISOString().split('T')[0];
@@ -114,11 +123,14 @@ class DBService {
     return data || [];
   }
 
-  async getLeads(user: User, options?: { page?: number; pageSize?: number }): Promise<{ data: Lead[]; count: number }> {
+  async getLeads(user: User, options?: { page?: number; pageSize?: number }): Promise<{ data: Lead[]; count: number; hasMore: boolean }> {
     const exists = await this.checkTableExists('leads');
-    if (!exists) return { data: [], count: 0 };
+    if (!exists) return { data: [], count: 0, hasMore: false };
 
-    const pageSize = options?.pageSize ?? 10000;
+    // Default page size lowered from 10000 to 500, sorted by most-recently-touched.
+    // This prevents the silent truncation bug where the oldest `follow_up_date`
+    // rows filled the array and the newest activity fell off the bottom.
+    const pageSize = options?.pageSize ?? 500;
     const page = options?.page ?? 0;
     const from = page * pageSize;
     const to = from + pageSize - 1;
@@ -128,33 +140,121 @@ class DBService {
       query = query.eq('assigned_agent_id', user.id);
     }
     const { data, error, count } = await query
-      .order('follow_up_date', { ascending: true })
+      .order('updated_at', { ascending: false, nullsFirst: false })
       .range(from, to);
     if (error) throw error;
-    return { data: data || [], count: count || 0 };
+    const total = count || 0;
+    const rows = data || [];
+    // Ensure embedded notes are always in chronological order. The Supabase
+    // embed join does not guarantee order; UI code assumes `notes[last]` is
+    // the newest, and HistoryModal reverses the array — both break on
+    // out-of-order rows.
+    for (const lead of rows) {
+      if (Array.isArray((lead as any).notes)) {
+        (lead as any).notes.sort((a: any, b: any) => {
+          const ta = a?.created_at ? Date.parse(a.created_at) : 0;
+          const tb = b?.created_at ? Date.parse(b.created_at) : 0;
+          return ta - tb;
+        });
+      }
+    }
+    return { data: rows, count: total, hasMore: total > (from + rows.length) };
   }
 
-  async addLead(leadData: Partial<Lead>, user: User): Promise<Lead> {
+  async addLead(
+    leadData: Partial<Lead>,
+    user: User,
+    targetAgent?: { id: string; name: string }
+  ): Promise<Lead> {
+    // An admin can create a lead on behalf of another agent via targetAgent.
+    // If not provided, the creator owns the lead (the default path for agents).
+    const ownerId = targetAgent?.id ?? user.id;
+    const ownerName = targetAgent?.name ?? user.name;
+
     const { data, error } = await supabase.from('leads').insert({
       ...leadData,
-      assigned_agent_id: user.id,
-      assigned_agent_name: user.name,
+      assigned_agent_id: ownerId,
+      assigned_agent_name: ownerName,
       follow_up_date: leadData.follow_up_date || getTodayString(),
     }).select().single();
     if (error) throw error;
+
+    // Audit: log who created the lead and whether it was an admin-proxy create.
+    const detail = targetAgent && targetAgent.id !== user.id
+      ? `Created by ${user.name} on behalf of ${ownerName}`
+      : `Created by ${user.name}`;
+    this.logActivity(data.id, user.id, 'created', detail).catch(() => {});
+
     return data;
   }
 
   async updateLead(leadId: string, updates: Partial<Lead>, user: User): Promise<void> {
+    // Read-before-write so we can diff and write an audit trail for any
+    // tracked field change. Failing the pre-read should NOT block the update
+    // — a missing log is better than a missing update.
+    let before: any = null;
+    try {
+      const { data } = await supabase.from('leads').select('status,todo,follow_up_date,every,cold_status,assigned_agent_id').eq('id', leadId).maybeSingle();
+      before = data;
+    } catch {
+      before = null;
+    }
+
     const { error } = await supabase.from('leads').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', leadId);
     if (error) {
       console.error("Supabase update error:", error);
       throw error;
     }
+
+    // Audit log: one row per field that actually changed. Best-effort; never throws.
+    if (before) {
+      const fieldMap: Array<{ key: keyof Lead; action: ActivityLog['action']; label: string }> = [
+        { key: 'status', action: 'status_changed', label: 'Status' },
+        { key: 'todo', action: 'todo_changed', label: 'Todo' },
+        { key: 'follow_up_date', action: 'date_changed', label: 'Follow-up date' },
+        { key: 'every', action: 'frequency_changed', label: 'Frequency' },
+        { key: 'cold_status', action: 'cold_status_changed', label: 'Cold status' },
+        { key: 'assigned_agent_id', action: 'reassigned', label: 'Assigned agent' },
+      ];
+      for (const f of fieldMap) {
+        const newVal = (updates as any)[f.key];
+        if (newVal === undefined) continue;
+        const oldVal = before[f.key];
+        if (newVal === oldVal) continue;
+        this.logActivity(leadId, user.id, f.action, `${f.label}: ${oldVal ?? '—'} → ${newVal ?? '—'}`).catch(() => {});
+      }
+    }
   }
 
-  async deleteLead(leadId: string): Promise<void> {
+  async deleteLead(leadId: string, user?: User): Promise<void> {
+    // Audit the deletion BEFORE the row goes away, so the trail survives.
+    if (user) {
+      this.logActivity(leadId, user.id, 'deleted', `Lead permanently deleted`).catch(() => {});
+    }
     const { error } = await supabase.from('leads').delete().eq('id', leadId);
+    if (error) throw error;
+  }
+
+  async bulkDeleteLeads(leadIds: string[], user: User): Promise<void> {
+    if (!leadIds.length) return;
+    // Audit first (best-effort) so the trail survives even if delete partially fails.
+    try {
+      const rows = leadIds.map(id => ({
+        lead_id: id,
+        agent_id: user.id,
+        action: 'deleted' as const,
+        details: `Lead permanently deleted via bulk action`,
+      }));
+      await supabase.from('activity_logs').insert(rows);
+    } catch (e) {
+      console.warn('Bulk delete audit log failed (non-fatal):', e);
+    }
+    const { error } = await supabase.from('leads').delete().in('id', leadIds);
+    if (error) throw error;
+  }
+
+  async updateProfileRole(userId: string, role: Role): Promise<void> {
+    const { error } = await supabase.from('profiles').update({ role }).eq('id', userId);
     if (error) throw error;
   }
 
@@ -192,6 +292,38 @@ class DBService {
     return data || [];
   }
 
+  // Fetch every audit entry for a specific lead. Used by the lead detail
+  // modal's "Full History" panel so investigations into "where did this
+  // lead go?" have a clear per-lead forensic trail.
+  async getLeadActivityLogs(leadId: string): Promise<ActivityLog[]> {
+    const { data, error } = await supabase
+      .from('activity_logs')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) {
+      console.error('getLeadActivityLogs failed:', error);
+      return [];
+    }
+    return data || [];
+  }
+
+  // Returns every lead that currently has a pending deletion request
+  // flagged by an agent. Used by the admin deletion-review panel.
+  async getPendingDeletionRequests(): Promise<Lead[]> {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('*, notes(*)')
+      .not('deletionRequest', 'is', null)
+      .order('updated_at', { ascending: false });
+    if (error) {
+      console.error('getPendingDeletionRequests failed:', error);
+      return [];
+    }
+    return (data || []) as any;
+  }
+
   async handleDeletionRequest(leadId: string, approve: boolean): Promise<void> {
     if (approve) {
       await supabase.from('leads').delete().eq('id', leadId);
@@ -201,6 +333,20 @@ class DBService {
   }
 
   async awardPoints(agentId: string, agentName: string, amount: number, reason: string, lead_id?: string): Promise<void> {
+    // Prefer the atomic RPC added in 0005_award_points_rpc.sql. If the
+    // function doesn't exist yet (migration not applied), fall back to the
+    // legacy read-modify-write path so the app keeps working.
+    const { error: rpcError } = await supabase.rpc('award_points', {
+      p_agent_id: agentId,
+      p_agent_name: agentName,
+      p_amount: amount,
+      p_reason: reason,
+      p_lead_id: lead_id ?? null,
+    });
+    if (!rpcError) return;
+
+    // Fallback — logs but does not throw so callers see the same behaviour.
+    console.warn('award_points RPC unavailable, using legacy path:', rpcError.message);
     await supabase.from('points_history').insert({ agent_id: agentId, agent_name: agentName, amount, reason, lead_id });
     const { data: profile } = await supabase.from('profiles').select('points').eq('id', agentId).single();
     await supabase.from('profiles').update({ points: (profile?.points || 0) + amount }).eq('id', agentId);
@@ -224,6 +370,19 @@ class DBService {
   }
 
   async processPayoutRequest(requestId: string, action: 'approved' | 'denied', adminId: string, note?: string): Promise<void> {
+    // Prefer the atomic RPC added in 0005_award_points_rpc.sql so the
+    // insufficient-points check, points deduction, history insert, and
+    // status update all happen in a single transaction.
+    const { error: rpcError } = await supabase.rpc('process_payout_request', {
+      p_request_id: requestId,
+      p_action: action,
+      p_admin_id: adminId,
+      p_note: note ?? null,
+    });
+    if (!rpcError) return;
+
+    // Fallback to legacy multi-statement flow if the RPC isn't available.
+    console.warn('process_payout_request RPC unavailable, using legacy path:', rpcError.message);
     const { data: request, error: fetchError } = await supabase
       .from('payout_requests')
       .select('*')
@@ -255,11 +414,18 @@ class DBService {
     }).eq('id', requestId);
   }
 
-  async calculateTeamStats(month: string): Promise<AgentStats> {
+  // ----- TeamStatsPage computed stats (intentional stubs) --------------------
+  // These return zero-filled stats on purpose: the TeamStatsPage allows
+  // admins to manually enter real values via EditableCell + setAgentTarget,
+  // so the automatic aggregation is not used in production. They are kept
+  // as no-ops (rather than deleted) so the page's state machine does not
+  // break. If/when real aggregation is implemented, compute from `leads`
+  // + `points_history` + `agent_targets` inside these methods.
+  async calculateTeamStats(_month: string): Promise<AgentStats> {
     return this.emptyStats('Team Total');
   }
 
-  async calculateAgentStats(agentId: string, month: string): Promise<AgentStats> {
+  async calculateAgentStats(_agentId: string, _month: string): Promise<AgentStats> {
     return this.emptyStats('Agent');
   }
 

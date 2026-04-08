@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Toaster } from 'react-hot-toast';
 import toast from 'react-hot-toast';
 import { Layout } from './components/Layout';
-import { db, getTodayString } from './services/db';
+import { db, getTodayString, isSchemaMissingError } from './services/db';
 import { supabase, isSupabaseConfigured } from './services/supabase';
 import { User, Lead, Role, LeadStatus, ActivityLog, TodoStatus, UsefulLink } from './types';
 import { LeadTable } from './components/LeadTable';
@@ -17,7 +17,13 @@ import { TeamStatsPage } from './components/TeamStatsPage';
 import { Dashboard } from './components/Dashboard';
 import { MyTasks } from './components/MyTasks';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap, AlertTriangle, Copy, Check, Link, ChevronDown, X, ExternalLink } from 'lucide-react';
+import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap, AlertTriangle, Copy, Check, Link, ChevronDown, X, ExternalLink, Trash2, CalendarClock } from 'lucide-react';
+
+// Virtual tab shown alongside the LeadStatus tabs. Not stored on the DB —
+// purely a client-side view that surfaces future-dated FOLLOWUP leads that
+// are intentionally hidden from their status tab so they don't clutter
+// "today's work" but were previously impossible to find.
+const SCHEDULED_TAB = 'scheduled' as const;
 
 // Configuration Required Screen
 const ConfigurationRequired: React.FC = () => {
@@ -114,8 +120,16 @@ const App: React.FC = () => {
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('dark');
 
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [leadsTotalCount, setLeadsTotalCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // "Has more" is derived rather than stored so it can never drift out of
+  // sync with leads.length after local mutations (delete / bulk delete).
+  const leadsHasMore = leads.length < leadsTotalCount;
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('');
 
   const [activeTab, setActiveTab] = useState<string>(() => {
     try {
@@ -226,18 +240,61 @@ const App: React.FC = () => {
     if (!user) return;
     try {
       setDbError(null);
-      const [{ data: leadData }, profiles, logs, updatedProfile] = await Promise.all([
+      const [leadsRes, profiles, logs, updatedProfile] = await Promise.all([
         db.getLeads(user),
         user.role === Role.ADMIN ? db.getAllProfiles() : Promise.resolve([]),
         user.role === Role.ADMIN ? db.getActivityLogs() : Promise.resolve([]),
         db.getCurrentProfile()
       ]);
-      setLeads(Array.isArray(leadData) ? leadData : []);
+      const leadData = Array.isArray(leadsRes?.data) ? leadsRes.data : [];
+      setLeads(leadData);
+      setLeadsTotalCount(leadsRes?.count ?? leadData.length);
       setAllUsers(Array.isArray(profiles) ? profiles : []);
       setActivityLogs(Array.isArray(logs) ? logs : []);
       if (updatedProfile) setCurrentUser(updatedProfile);
     } catch (err: any) {
-      setDbError('SCHEMA_MISSING');
+      // Only fall back to the "schema missing" screen when the error is
+      // actually a missing-relation error. Transient network failures now
+      // show a toast and keep the last-known data on screen so the user
+      // never loses their place.
+      if (isSchemaMissingError(err)) {
+        setDbError('SCHEMA_MISSING');
+      } else {
+        console.error('refreshData failed:', err);
+        toast.error('Could not refresh. Showing cached data.');
+      }
+    }
+  };
+
+  const loadMoreLeads = async () => {
+    if (!currentUser || loadingMore || !leadsHasMore) return;
+    setLoadingMore(true);
+    try {
+      // Page by current offset rather than a stored page index — after a
+      // local delete, `leads.length` may have shrunk past a page boundary
+      // and we should fetch whatever's next, not re-fetch a stale page.
+      const PAGE_SIZE = 500;
+      const nextPage = Math.floor(leads.length / PAGE_SIZE);
+      const res = await db.getLeads(currentUser, { page: nextPage, pageSize: PAGE_SIZE });
+      const newData = Array.isArray(res?.data) ? res.data : [];
+      if (newData.length === 0) {
+        // Server has nothing left — resync total so the banner hides itself
+        // and the user isn't stuck clicking a dead button.
+        setLeadsTotalCount(res?.count ?? leads.length);
+        return;
+      }
+      setLeads(prev => {
+        const seen = new Set(prev.map(l => l.id));
+        return [...prev, ...newData.filter(l => !seen.has(l.id))];
+      });
+      setLeadsTotalCount(res?.count ?? leadsTotalCount);
+    } catch (err) {
+      console.error('Load more failed:', err);
+      toast.error('Could not load more leads.');
+      // Resync from source of truth so we don't leave the banner stuck.
+      refreshData();
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -253,7 +310,8 @@ const App: React.FC = () => {
     try {
       await db.updateLead(leadId, { follow_up_date: newDate }, currentUser);
       await db.logActivity(leadId, currentUser.id, 'date_changed', `Rescheduled lead to ${newDate} via calendar drag`);
-      setTimeout(() => refreshData(), 600);
+      // No setTimeout refetch here — the audit wrapper in db.updateLead
+      // already logs the change, and the optimistic patch is authoritative.
     } catch (err) {
       console.error("Failed to move lead:", err);
       refreshData();
@@ -264,31 +322,71 @@ const App: React.FC = () => {
     if (!window.confirm("Are you sure you want to permanently delete this lead?")) return;
 
     try {
-      await db.deleteLead(leadId);
+      await db.deleteLead(leadId, currentUser || undefined);
       setLeads(prev => prev.filter(l => l.id !== leadId));
       if (selectedLeadId === leadId) setSelectedLeadId(null);
       toast.success('Lead deleted.');
+      // Resync total from server so the load-more banner stays accurate.
+      refreshData();
     } catch (err) {
       console.error("Failed to delete lead:", err);
       toast.error('Failed to delete lead.');
     }
-  }, [selectedLeadId]);
+  }, [selectedLeadId, currentUser]);
+
+  const toggleBulkSelect = useCallback((leadId: string) => {
+    setBulkSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(leadId)) next.delete(leadId);
+      else next.add(leadId);
+      return next;
+    });
+  }, []);
+
+  const clearBulkSelection = useCallback(() => setBulkSelectedIds(new Set()), []);
+
+  const selectAllVisible = useCallback((ids: string[]) => {
+    setBulkSelectedIds(new Set(ids));
+  }, []);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (!currentUser || bulkSelectedIds.size === 0) return;
+    if (bulkDeleteConfirmText !== 'DELETE') return;
+    const ids: string[] = Array.from(bulkSelectedIds);
+    try {
+      await db.bulkDeleteLeads(ids, currentUser);
+      setLeads(prev => prev.filter(l => !bulkSelectedIds.has(l.id)));
+      toast.success(`${ids.length} lead${ids.length > 1 ? 's' : ''} deleted.`);
+      setBulkSelectedIds(new Set());
+      setShowBulkDeleteConfirm(false);
+      setBulkDeleteConfirmText('');
+      // Resync counts + hasMore from source of truth. Fixes the "171 of 0"
+      // drift where local decrement pushed totalCount below leads.length.
+      refreshData();
+    } catch (err) {
+      console.error('Bulk delete failed:', err);
+      toast.error('Bulk delete failed.');
+    }
+  }, [currentUser, bulkSelectedIds, bulkDeleteConfirmText]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
 
-  // Filter leads by selected agent (for admin view), date range, and search
+  // Filter leads by selected agent (for admin view), date range, and search.
+  // NOTE: leads missing `created_at` (legacy/failed inserts) used to be
+  // silently dropped the moment a date filter was applied — now they pass
+  // through so nothing is ever invisible because of missing metadata.
   const agentFilteredLeads = useMemo(() => {
     let result = Array.isArray(leads) ? leads : [];
     if (currentUser?.role === Role.ADMIN && selectedAgentFilter) {
       result = result.filter(l => l.assigned_agent_id === selectedAgentFilter);
     }
     if (dateFrom) {
-      result = result.filter(l => l.created_at && l.created_at.slice(0, 10) >= dateFrom);
+      result = result.filter(l => !l.created_at || l.created_at.slice(0, 10) >= dateFrom);
     }
     if (dateTo) {
-      result = result.filter(l => l.created_at && l.created_at.slice(0, 10) <= dateTo);
+      result = result.filter(l => !l.created_at || l.created_at.slice(0, 10) <= dateTo);
     }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
@@ -300,12 +398,33 @@ const App: React.FC = () => {
     return result;
   }, [leads, currentUser, selectedAgentFilter, dateFrom, dateTo, searchQuery]);
 
+  // A lead is "scheduled" when it has a future FOLLOWUP date. These used to
+  // be invisible — filtered out of their status tab by App.tsx but with
+  // nowhere to find them — which is the #2 source of "we lost a lead"
+  // complaints.
+  const scheduledLeads = useMemo(() => {
+    const today = getTodayString();
+    return agentFilteredLeads.filter(l =>
+      l.todo === TodoStatus.FOLLOWUP && l.follow_up_date > today
+    );
+  }, [agentFilteredLeads]);
+
   const tableLeads = useMemo(() => {
     let filtered = agentFilteredLeads;
     const today = getTodayString();
 
+    // Virtual "scheduled" tab shows every future FOLLOWUP lead across all
+    // statuses. Sorted by the date they'll surface so the most imminent
+    // appear first.
+    if (activeTab === SCHEDULED_TAB) {
+      return agentFilteredLeads
+        .filter(l => l.todo === TodoStatus.FOLLOWUP && l.follow_up_date > today)
+        .sort((a, b) => (a.follow_up_date || '').localeCompare(b.follow_up_date || ''));
+    }
+
     // Apply scheduled leads filter for both AGENT and ADMIN
     // When todo is FOLLOWUP and date is in the future, hide the lead until that date
+    // (they are still reachable via the Scheduled tab above).
     if ([LeadStatus.HOT, LeadStatus.WARM, LeadStatus.COLD, LeadStatus.PROGRESSIVE].includes(activeTab as LeadStatus)) {
       filtered = filtered.filter(l =>
         l.todo !== TodoStatus.FOLLOWUP || l.follow_up_date <= today
@@ -620,7 +739,7 @@ const App: React.FC = () => {
                     return (
                       <button
                         key={status}
-                        onClick={() => setActiveTab(status)}
+                        onClick={() => { setActiveTab(status); clearBulkSelection(); }}
                         className={`
                             whitespace-nowrap px-5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 transition-standard
                             ${isActive ? 'bg-white/10 text-white border border-white/5 shadow-inner' : 'text-muted hover:text-white'}
@@ -633,8 +752,71 @@ const App: React.FC = () => {
                       </button>
                     );
                   })}
+                  {/* Virtual "Scheduled" tab — surfaces future-dated FOLLOWUP leads
+                      that are intentionally hidden from their status tab. */}
+                  <button
+                    onClick={() => { setActiveTab(SCHEDULED_TAB); clearBulkSelection(); }}
+                    className={`whitespace-nowrap px-5 py-2 rounded-lg font-bold text-[10px] uppercase tracking-widest flex items-center gap-2 transition-standard
+                        ${activeTab === SCHEDULED_TAB ? 'bg-white/10 text-white border border-white/5 shadow-inner' : 'text-muted hover:text-white'}`}
+                    title="Future-dated follow-ups (hidden from their status tab until due)"
+                  >
+                    <CalendarClock size={12} />
+                    Scheduled
+                    <span className={`px-2 py-0.5 rounded-md text-[8px] ${activeTab === SCHEDULED_TAB ? 'bg-brand-500 text-white' : 'bg-white/5 text-muted'}`}>
+                      {scheduledLeads.length}
+                    </span>
+                  </button>
                 </nav>
               </div>
+
+              {/* Row-cap banner — only appears when the DB holds more leads
+                  than the current page has loaded. Prevents the silent
+                  truncation that was losing leads at scale. */}
+              {leadsHasMore && (
+                <div className="flex items-center justify-between px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                  <div className="text-xs text-amber-300">
+                    <strong>Showing {leads.length} of {leadsTotalCount} leads.</strong>
+                    <span className="text-amber-200/70 ml-2">Older leads aren't loaded yet.</span>
+                  </div>
+                  <button
+                    onClick={loadMoreLeads}
+                    disabled={loadingMore}
+                    className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 rounded-lg text-[10px] font-black uppercase tracking-widest text-amber-200 transition-all disabled:opacity-50"
+                  >
+                    {loadingMore ? 'Loading…' : 'Load more'}
+                  </button>
+                </div>
+              )}
+
+              {/* Bulk action bar — only visible in Closed tab when admin has selected rows. */}
+              {currentUser.role === Role.ADMIN && activeTab === LeadStatus.CLOSED && bulkSelectedIds.size > 0 && (
+                <div className="flex items-center justify-between px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl animate-fade-in sticky top-0 z-40">
+                  <div className="text-xs font-bold text-red-300">
+                    {bulkSelectedIds.size} selected
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => selectAllVisible(tableLeads.map(l => l.id))}
+                      className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-red-200 hover:bg-white/5 rounded-lg transition-all"
+                    >
+                      Select all {tableLeads.length}
+                    </button>
+                    <button
+                      onClick={clearBulkSelection}
+                      className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-muted hover:text-white hover:bg-white/5 rounded-lg transition-all"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => { setBulkDeleteConfirmText(''); setShowBulkDeleteConfirm(true); }}
+                      className="flex items-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg transition-all"
+                    >
+                      <Trash2 size={12} />
+                      Delete permanently
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <ErrorBoundary>
                 <LeadTable
@@ -646,6 +828,9 @@ const App: React.FC = () => {
                   onDelete={handleDeleteLead}
                   showAgentColumn={currentUser.role === Role.ADMIN}
                   onLeadClick={(lead) => setSelectedLeadId(lead.id)}
+                  bulkSelectedIds={bulkSelectedIds}
+                  onToggleBulkSelect={toggleBulkSelect}
+                  bulkSelectEnabled={currentUser.role === Role.ADMIN && activeTab === LeadStatus.CLOSED}
                 />
               </ErrorBoundary>
 
@@ -688,7 +873,7 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {isAddModalOpen && <AddLeadModal currentUser={currentUser} onClose={() => setIsAddModalOpen(false)} onSuccess={refreshData} />}
+      {isAddModalOpen && <AddLeadModal currentUser={currentUser} allUsers={allUsers} onClose={() => setIsAddModalOpen(false)} onSuccess={refreshData} />}
       {currentSelectedLead && (
         <LeadDetailModal
           lead={currentSelectedLead}
@@ -752,6 +937,50 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Bulk delete confirmation — requires typing DELETE to prevent mis-clicks. */}
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowBulkDeleteConfirm(false)}>
+          <div className="bg-[#111] shadow-2xl w-full max-w-md overflow-hidden animate-scale-in border border-red-500/20 rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-white/5 flex items-center gap-3 bg-red-500/5">
+              <AlertTriangle size={18} className="text-red-400" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-widest">Permanent delete</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-muted">
+                You are about to permanently delete <strong className="text-white">{bulkSelectedIds.size} lead{bulkSelectedIds.size > 1 ? 's' : ''}</strong>. This cannot be undone.
+              </p>
+              <div>
+                <label className="text-xs font-bold text-muted uppercase tracking-widest mb-2 block">
+                  Type <span className="text-red-400 font-mono">DELETE</span> to confirm
+                </label>
+                <input
+                  type="text"
+                  value={bulkDeleteConfirmText}
+                  onChange={e => setBulkDeleteConfirmText(e.target.value)}
+                  autoFocus
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm text-white outline-none focus:ring-1 focus:ring-red-500 focus:border-red-500 transition-all font-mono"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 bg-white/[0.02] border-t border-white/5 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowBulkDeleteConfirm(false); setBulkDeleteConfirmText(''); }}
+                className="px-4 py-2 text-sm font-medium text-muted hover:text-white hover:bg-white/5 rounded-lg transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleteConfirmText !== 'DELETE'}
+                className="px-5 py-2 bg-red-500 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-lg transition-all"
+              >
+                Delete permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Toaster position="top-right" toastOptions={{ style: { background: '#111', color: '#fff', border: '1px solid rgba(255,255,255,0.1)' } }} />
     </Layout>
   );

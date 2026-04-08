@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { Lead, Role, TodoStatus, LeadStatus, EveryFreq, User } from '../types';
+import { Lead, Role, TodoStatus, LeadStatus, EveryFreq, User, ActivityLog } from '../types';
 // Added Loader2 to the imports from lucide-react
-import { X, ExternalLink, Trash2, Save, Loader2 } from 'lucide-react';
+import { X, ExternalLink, Trash2, Save, Loader2, History, ChevronDown, ChevronUp } from 'lucide-react';
 import { db, getTodayString } from '../services/db';
 import toast from 'react-hot-toast';
 
@@ -27,7 +27,44 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ lead, currentU
   const [editLink, setEditLink] = useState(lead.link || '');
   const [saving, setSaving] = useState(false);
 
+  // Per-lead activity feed — forensic trail of every tracked mutation.
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityExpanded, setActivityExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setActivityLoading(true);
+    db.getLeadActivityLogs(lead.id)
+      .then(logs => { if (!cancelled) setActivityLogs(logs); })
+      .finally(() => { if (!cancelled) setActivityLoading(false); });
+    return () => { cancelled = true; };
+  }, [lead.id]);
+
   const isAdmin = currentUser && currentUser.role === Role.ADMIN;
+
+  const actionLabel = (action: string) => {
+    switch (action) {
+      case 'created': return 'Created';
+      case 'status_changed': return 'Status changed';
+      case 'todo_changed': return 'Todo changed';
+      case 'date_changed': return 'Date changed';
+      case 'frequency_changed': return 'Frequency changed';
+      case 'cold_status_changed': return 'Cold status changed';
+      case 'reassigned': return 'Reassigned';
+      case 'note_added': return 'Note added';
+      case 'deleted': return 'Deleted';
+      case 'rule_violation': return 'Rule violation';
+      case 'admin_warning': return 'Admin warning';
+      default: return action;
+    }
+  };
+  const actionColor = (action: string) => {
+    if (action === 'deleted' || action === 'rule_violation' || action === 'admin_warning') return 'text-red-400 bg-red-500/10 border-red-500/20';
+    if (action === 'reassigned') return 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+    if (action === 'status_changed' || action === 'todo_changed') return 'text-brand-400 bg-brand-500/10 border-brand-500/20';
+    return 'text-gray-400 bg-white/5 border-white/10';
+  };
   
   // Sync internal state if the lead prop changes from parent
   useEffect(() => {
@@ -90,9 +127,25 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ lead, currentU
     }
 
     try {
-        // Step 1: Optimistic Local Patch (Update UI immediately)
+        // Step 1: Optimistic Local Patch (Update UI immediately).
+        // If a note is being added, append it to the notes array locally
+        // with a temporary id so it shows up without a full refetch.
+        const optimisticUpdates: Partial<Lead> = { ...updates };
+        if (newNote.trim()) {
+          const existingNotes = Array.isArray(lead.notes) ? lead.notes : [];
+          optimisticUpdates.notes = [
+            ...existingNotes,
+            {
+              id: `tmp-${Date.now()}`,
+              text: newNote.trim(),
+              created_at: new Date().toISOString(),
+              author_id: currentUser.id,
+              author_name: currentUser.name,
+            } as any,
+          ];
+        }
         if (onPatch && (hasChanges || newNote.trim())) {
-            onPatch(lead.id, updates);
+            onPatch(lead.id, optimisticUpdates);
         }
 
         // Step 2: Persistent DB Updates (Sequential to ensure stability)
@@ -107,10 +160,12 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ lead, currentU
             }
         }
 
-        // Step 3: Success handling
+        // Step 3: Success handling — trust the optimistic patch, do NOT
+        // schedule a delayed full refetch. The previous 600ms setTimeout
+        // caused a race where the refetch could overwrite newer edits
+        // made on other rows in the meantime.
         toast.success("Lead updated.");
         onClose();
-        setTimeout(() => { onUpdate(); }, 600);
 
     } catch (err) {
         console.error("Save failed:", err);
@@ -355,7 +410,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ lead, currentU
 
              <div className="space-y-2 flex flex-col h-full">
                  <label className={labelClass}>
-                     History <span className="text-gray-500 font-normal ml-1">({lead.notes ? lead.notes.length : 0})</span>
+                     Notes History <span className="text-gray-500 font-normal ml-1">({lead.notes ? lead.notes.length : 0})</span>
                  </label>
                  <div className="bg-[#1a1a1a] rounded-lg p-3 overflow-y-auto h-32 flex-1 border border-[#2f2f2f] space-y-3 custom-scrollbar">
                    {!lead.notes || lead.notes.length === 0 ? (
@@ -373,6 +428,59 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({ lead, currentU
                    )}
                  </div>
              </div>
+          </div>
+
+          {/* Audit trail — every tracked mutation on this lead. Expandable
+              so the common case stays compact. Crucial for investigating
+              "where did my lead go?" reports. */}
+          <div className="border border-[#2f2f2f] rounded-lg bg-[#1a1a1a] mt-6">
+            <button
+              type="button"
+              onClick={() => setActivityExpanded(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/[0.02] transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <History size={14} className="text-brand-400" />
+                <span className="text-xs font-bold uppercase tracking-widest text-gray-300">
+                  Activity trail
+                </span>
+                <span className="text-[10px] text-gray-500 font-normal">
+                  ({activityLoading ? '…' : activityLogs.length})
+                </span>
+              </div>
+              {activityExpanded ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
+            </button>
+            {activityExpanded && (
+              <div className="border-t border-[#2f2f2f] max-h-64 overflow-y-auto custom-scrollbar">
+                {activityLoading ? (
+                  <div className="flex items-center justify-center py-8 text-gray-500 text-xs">
+                    <Loader2 size={14} className="animate-spin mr-2" /> Loading…
+                  </div>
+                ) : activityLogs.length === 0 ? (
+                  <p className="text-xs text-gray-600 text-center py-8 italic">No activity recorded yet.</p>
+                ) : (
+                  <ul className="divide-y divide-[#2f2f2f]">
+                    {activityLogs.map(log => (
+                      <li key={log.id} className="px-4 py-2.5 hover:bg-white/[0.01]">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${actionColor(log.action)}`}>
+                                {actionLabel(log.action)}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-300 leading-relaxed break-words">{log.details || '—'}</p>
+                          </div>
+                          <span className="text-[10px] text-gray-600 whitespace-nowrap shrink-0">
+                            {log.created_at ? new Date(log.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : ''}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

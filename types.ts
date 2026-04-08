@@ -114,7 +114,7 @@ export interface ActivityLog {
   id: string;
   lead_id: string;
   agent_id: string;
-  action: 'note_added' | 'date_changed' | 'status_changed' | 'created' | 'rule_violation' | 'reassigned' | 'admin_warning';
+  action: 'note_added' | 'date_changed' | 'status_changed' | 'created' | 'rule_violation' | 'reassigned' | 'admin_warning' | 'deleted' | 'todo_changed' | 'frequency_changed' | 'cold_status_changed';
   details: string;
   created_at: string;
 }

@@ -163,28 +163,20 @@ GRANT ALL ON public.payout_requests TO authenticated;
 GRANT ALL ON public.agent_targets TO authenticated;
 GRANT ALL ON public.agent_strategies TO authenticated;
 
+-- NOTE ON RLS POLICIES:
+-- The production RLS policies live in supabase/migrations/ (0002+), not in
+-- this bootstrap script. Running this script on a fresh project creates the
+-- tables but leaves RLS empty — apply 0002_rls_tightening.sql separately.
+-- This script no longer re-creates the old permissive "Auth all" policies
+-- so you cannot accidentally downgrade a hardened database by rerunning it.
+
+-- Minimal profile policies (needed before a user can create their own profile)
 DO $$ BEGIN
-    DROP POLICY IF EXISTS "Auth all" ON public.personal_tasks;
-    DROP POLICY IF EXISTS "Auth all" ON public.leads;
-    DROP POLICY IF EXISTS "Auth all" ON public.notes;
-    DROP POLICY IF EXISTS "Auth all" ON public.activity_logs;
-    DROP POLICY IF EXISTS "Auth all" ON public.points_history;
-    DROP POLICY IF EXISTS "Auth all" ON public.payout_requests;
-    DROP POLICY IF EXISTS "Auth all" ON public.agent_targets;
-    DROP POLICY IF EXISTS "Auth all" ON public.agent_strategies;
     DROP POLICY IF EXISTS "Profiles are viewable by authenticated users" ON public.profiles;
     DROP POLICY IF EXISTS "Users can insert their own profile." ON public.profiles;
     DROP POLICY IF EXISTS "Users can update own profile." ON public.profiles;
 END $$;
 
-CREATE POLICY "Auth all" ON public.personal_tasks FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Auth all" ON public.leads FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Auth all" ON public.notes FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Auth all" ON public.activity_logs FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Auth all" ON public.points_history FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Auth all" ON public.payout_requests FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Auth all" ON public.agent_targets FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Auth all" ON public.agent_strategies FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "Profiles are viewable by authenticated users" ON public.profiles FOR SELECT USING (auth.role() = 'authenticated');
 CREATE POLICY "Users can insert their own profile." ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 CREATE POLICY "Users can update own profile." ON public.profiles FOR UPDATE USING (auth.uid() = id);
@@ -262,7 +254,11 @@ CREATE POLICY "Users can update own profile." ON public.profiles FOR UPDATE USIN
             <div className="space-y-2">
                 <p className="text-xl text-amber-400 font-black uppercase tracking-tighter italic">Migration Required</p>
                 <p className="text-sm text-gray-400 leading-relaxed font-medium">
-                    Run the SQL script below to update your schema. This will create all required tables including <span className="text-white">personal_tasks</span>.
+                    Run the SQL script below to create any missing tables. This is a bootstrap script only —
+                    <span className="text-white"> the production RLS policies, indexes, audit triggers, and RPCs live in <code className="bg-black/30 px-1.5 py-0.5 rounded text-amber-300">supabase/migrations/</code></span> and should be applied separately in numeric order.
+                </p>
+                <p className="text-xs text-amber-300/80 font-medium italic">
+                    Safe to re-run: this script no longer overwrites RLS policies, so it will not accidentally downgrade a hardened database.
                 </p>
             </div>
         </div>

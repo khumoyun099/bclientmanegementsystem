@@ -24,3 +24,9 @@ dist-ssr
 *.sln
 *.sw?
 .env.backup
+
+# Claude Code local config (dev server launch, scratch files)
+.claude/
+
+# Supabase CLI cache
+supabase/.temp/

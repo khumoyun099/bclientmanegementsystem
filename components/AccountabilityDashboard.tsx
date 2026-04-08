@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { User, Lead, ActivityLog, Role, LeadStatus } from '../types';
 import { getTodayString, db } from '../services/db';
-import { AlertTriangle, Users, UserCog, LineChart, Info, ChevronDown, ChevronUp, X, ArrowRightLeft, MessageSquareWarning } from 'lucide-react';
+import { AlertTriangle, Users, UserCog, LineChart, Info, ChevronDown, ChevronUp, X, ArrowRightLeft, MessageSquareWarning, Trash2, Check, Undo2 } from 'lucide-react';
 import { LeadTable } from './LeadTable';
 import { StrategyModal } from './StrategyModal';
 import toast from 'react-hot-toast';
@@ -94,6 +94,52 @@ export const AccountabilityDashboard: React.FC<AccountabilityDashboardProps> = (
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [reassignTargetAgentId, setReassignTargetAgentId] = useState<string>('');
   const [reassignLoading, setReassignLoading] = useState(false);
+
+  // Pending deletion requests (agents can flag a lead for admin review).
+  // Previously the request badge only showed inside the detail modal, so
+  // admin had no way to find flagged leads at a glance.
+  const [pendingDeletions, setPendingDeletions] = useState<Lead[]>([]);
+  const [pendingDeletionsLoading, setPendingDeletionsLoading] = useState(false);
+  const [pendingDeletionsExpanded, setPendingDeletionsExpanded] = useState(true);
+
+  const refreshPendingDeletions = async () => {
+    setPendingDeletionsLoading(true);
+    try {
+      const res = await db.getPendingDeletionRequests();
+      setPendingDeletions(res);
+    } finally {
+      setPendingDeletionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshPendingDeletions();
+  }, []);
+
+  const handleApproveDeletion = async (leadId: string) => {
+    if (!confirm('Permanently delete this lead? This cannot be undone.')) return;
+    try {
+      await db.handleDeletionRequest(leadId, true);
+      toast.success('Deletion approved.');
+      setPendingDeletions(prev => prev.filter(l => l.id !== leadId));
+      onRefresh();
+    } catch (err) {
+      console.error('Approve deletion failed:', err);
+      toast.error('Failed to approve deletion.');
+    }
+  };
+
+  const handleDenyDeletion = async (leadId: string) => {
+    try {
+      await db.handleDeletionRequest(leadId, false);
+      toast.success('Deletion request cleared.');
+      setPendingDeletions(prev => prev.filter(l => l.id !== leadId));
+      onRefresh();
+    } catch (err) {
+      console.error('Deny deletion failed:', err);
+      toast.error('Failed to clear request.');
+    }
+  };
 
   // Dummy admin user for table context — guard against empty users array
   const adminUser: User | undefined = users.find(u => u.role === Role.ADMIN) || users[0];
@@ -188,9 +234,14 @@ export const AccountabilityDashboard: React.FC<AccountabilityDashboardProps> = (
   const handleToggleRole = async (user: User) => {
     const newRole = user.role === Role.ADMIN ? Role.AGENT : Role.ADMIN;
     if (confirm(`Change ${user.name}'s role to ${newRole.toUpperCase()}?`)) {
-        await db.updateLead(user.id, { role: newRole } as any, adminUser);
-        alert("Role updated. Please refresh.");
-        onRefresh();
+        try {
+          await db.updateProfileRole(user.id, newRole);
+          toast.success(`${user.name} is now ${newRole.toUpperCase()}.`);
+          onRefresh();
+        } catch (err) {
+          console.error('Role update failed:', err);
+          toast.error('Failed to update role.');
+        }
     }
   };
 
@@ -283,6 +334,84 @@ export const AccountabilityDashboard: React.FC<AccountabilityDashboardProps> = (
 
   return (
     <div className="space-y-6">
+      {/* Pending deletion requests — shows agents who have flagged a lead
+          for admin review. Previously the flag was only visible inside each
+          individual lead's detail modal, meaning admins would never find
+          them without clicking into every lead. */}
+      {pendingDeletions.length > 0 && (
+        <div className="bg-red-500/5 border border-red-500/20 rounded-xl overflow-hidden animate-fade-in">
+          <button
+            type="button"
+            onClick={() => setPendingDeletionsExpanded(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-4 hover:bg-red-500/[0.03] transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-red-500/10 rounded-lg border border-red-500/20">
+                <Trash2 size={14} className="text-red-400" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-sm font-bold text-red-300 uppercase tracking-wider">
+                  Pending deletion requests
+                </h3>
+                <p className="text-[10px] text-red-400/60 font-medium mt-0.5">
+                  {pendingDeletions.length} lead{pendingDeletions.length > 1 ? 's' : ''} flagged by agents for removal
+                </p>
+              </div>
+            </div>
+            {pendingDeletionsExpanded ? <ChevronUp size={16} className="text-red-400/60" /> : <ChevronDown size={16} className="text-red-400/60" />}
+          </button>
+          {pendingDeletionsExpanded && (
+            <div className="border-t border-red-500/20 divide-y divide-red-500/10 max-h-96 overflow-y-auto custom-scrollbar">
+              {pendingDeletionsLoading ? (
+                <div className="text-center py-8 text-xs text-red-400/60">Loading…</div>
+              ) : (
+                pendingDeletions.map(lead => (
+                  <div key={lead.id} className="flex items-center justify-between px-5 py-3 hover:bg-red-500/[0.03]">
+                    <div className="flex-1 min-w-0">
+                      <button
+                        onClick={() => onSelectLead(lead)}
+                        className="text-sm font-bold text-white hover:text-red-300 text-left truncate block"
+                      >
+                        {lead.name}
+                      </button>
+                      <div className="flex items-center gap-3 mt-1 text-[10px] text-gray-500 font-medium">
+                        <span>Agent: <span className="text-gray-400">{lead.assigned_agent_name || '—'}</span></span>
+                        {lead.deletionRequest && (
+                          <>
+                            <span>Requested by: <span className="text-gray-400">{lead.deletionRequest.requestedBy}</span></span>
+                            <span>
+                              {lead.deletionRequest.requestedAt
+                                ? new Date(lead.deletionRequest.requestedAt).toLocaleDateString()
+                                : ''}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
+                      <button
+                        onClick={() => handleDenyDeletion(lead.id)}
+                        className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all"
+                        title="Keep the lead — clears the deletion request"
+                      >
+                        <Undo2 size={12} /> Keep
+                      </button>
+                      <button
+                        onClick={() => handleApproveDeletion(lead.id)}
+                        className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-white bg-red-500 hover:bg-red-600 rounded-lg transition-all"
+                        title="Approve and permanently delete"
+                      >
+                        <Check size={12} /> Delete
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-gray-400">
               <Users size={18} />

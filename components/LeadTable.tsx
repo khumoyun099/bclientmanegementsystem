@@ -1,5 +1,5 @@
 
-import React, { useState, memo, useCallback, useEffect, useRef } from 'react';
+import React, { useState, memo, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Lead, TodoStatus, LeadStatus, EveryFreq, Role, User } from '../types';
 import { TodoBadge } from './Badge';
 import { getTodayString, db } from '../services/db';
@@ -19,6 +19,9 @@ interface LeadTableProps {
     showAgentColumn?: boolean;
     onLeadClick?: (lead: Lead) => void;
     isLoading?: boolean;
+    bulkSelectedIds?: Set<string>;
+    onToggleBulkSelect?: (id: string) => void;
+    bulkSelectEnabled?: boolean;
 }
 
 const HistoryModal: React.FC<{ lead: Lead; onClose: () => void }> = ({ lead, onClose }) => {
@@ -54,31 +57,33 @@ const HistoryModal: React.FC<{ lead: Lead; onClose: () => void }> = ({ lead, onC
     );
 };
 
-const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate, onPatch, onDelete, onLeadClick, colWidths }: any) => {
+const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate, onPatch, onDelete, onLeadClick, colWidths, bulkSelectEnabled, bulkSelected, onToggleBulkSelect }: any) => {
     const [showHistory, setShowHistory] = useState(false);
     const [showCloseModal, setShowCloseModal] = useState(false);
     const [localNote, setLocalNote] = useState('');
+    // Tracks whether the input is currently focused. When idle it shows
+    // the latest note as context; on focus the field clears so a fresh
+    // note is typed (instead of silently "editing" into a duplicate).
+    const [noteFocused, setNoteFocused] = useState(false);
     const dateInputRef = useRef<HTMLInputElement>(null);
     const isSupervisor = currentUser?.role === Role.ADMIN;
     const today = getTodayString();
 
+    // Reset the draft when switching rows.
     useEffect(() => {
-        const notes = Array.isArray(lead.notes) ? lead.notes : [];
-        if (notes.length > 0) {
-            setLocalNote(notes[notes.length - 1].text);
-        } else {
-            setLocalNote('');
-        }
+        setLocalNote('');
+        setNoteFocused(false);
     }, [lead.id]);
 
     const handleUpdate = async (updates: Partial<Lead>) => {
-        // Optimistic update first
+        // Optimistic update first. On success we TRUST the patch and do NOT
+        // schedule a background refetch — the old setTimeout(onUpdate, 5000)
+        // pattern caused a race where a stale full-fetch would overwrite a
+        // newer in-flight edit on an adjacent row, making lead fields appear
+        // to revert or jump tabs ("losing leads"). On failure we full-refresh.
         onPatch(lead.id, updates);
         try {
             await db.updateLead(lead.id, updates, currentUser);
-            // Don't auto-refresh - let optimistic update persist
-            // Only refresh after significant delay for background sync
-            setTimeout(onUpdate, 5000);
         } catch (err) {
             console.error("Update failed:", err);
             toast.error("Update failed. Please try again.");
@@ -86,18 +91,40 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
         }
     };
 
-    const handleNoteBlur = async () => {
+    const latestNoteText = useMemo(() => {
         const notes = Array.isArray(lead.notes) ? lead.notes : [];
-        const currentLatestText = notes.length > 0 ? notes[notes.length - 1].text : '';
+        return notes.length > 0 ? notes[notes.length - 1].text : '';
+    }, [lead.notes]);
 
-        if (localNote.trim() !== currentLatestText.trim() && localNote.trim() !== '') {
+    const handleNoteFocus = () => {
+        // Clear the pre-filled latest-note context so the user types fresh.
+        setNoteFocused(true);
+        setLocalNote('');
+    };
+
+    const handleNoteBlur = async () => {
+        setNoteFocused(false);
+        const notes = Array.isArray(lead.notes) ? lead.notes : [];
+
+        if (localNote.trim() !== '') {
+            // Optimistically append the new note so the UI shows it instantly
+            // without a full refetch (the old onUpdate() call caused the same
+            // race condition Phase 1 killed for status edits).
+            const tempNote = {
+                id: `tmp-${Date.now()}`,
+                text: localNote.trim(),
+                created_at: new Date().toISOString(),
+                author_id: currentUser.id,
+                author_name: currentUser.name,
+            } as any;
+            onPatch(lead.id, { notes: [...notes, tempNote] });
             try {
                 await db.addNote(lead.id, localNote.trim(), currentUser);
                 toast.success("Note saved.");
-                onUpdate();
             } catch (err) {
                 console.error("Failed to add note:", err);
                 toast.error("Failed to save note.");
+                onUpdate(); // roll back on failure
             }
         }
     };
@@ -206,8 +233,56 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
         </div>
     );
 
+    // Compact view for the virtual "scheduled" tab — only shows the
+    // information you need to identify the lead and when it will surface.
+    if (activeTab === 'scheduled') {
+        return (
+            <tr className="hover:bg-white/[0.01] transition-colors border-none group">
+                <td className="px-2 py-2 overflow-hidden">
+                    <button
+                        onClick={() => onLeadClick && onLeadClick(lead)}
+                        className="text-sm font-bold text-white tracking-tight block truncate hover:text-brand-400 transition-colors cursor-pointer text-left w-full"
+                    >
+                        {lead.name}
+                    </button>
+                </td>
+                <td className="px-2 py-2 text-[9px] font-black uppercase tracking-widest text-brand-400">
+                    {(lead.status || '').toUpperCase()}
+                </td>
+                <td className="px-2 py-2 text-xs font-bold text-amber-300">
+                    {lead.follow_up_date}
+                </td>
+                {showAgentColumn && (
+                    <td className="px-2 py-2 text-[9px] font-bold uppercase text-muted truncate">
+                        {lead.assigned_agent_name}
+                    </td>
+                )}
+                <td className="px-2 py-2 text-center">
+                    <button
+                        onClick={() => setShowHistory(true)}
+                        className="p-1.5 text-muted hover:text-white hover:bg-white/5 rounded transition-all"
+                    >
+                        <Clock size={14} />
+                    </button>
+                    {showHistory && <HistoryModal lead={lead} onClose={() => setShowHistory(false)} />}
+                </td>
+            </tr>
+        );
+    }
+
     return (
         <tr className="hover:bg-white/[0.01] transition-colors border-none group">
+            {bulkSelectEnabled && (
+                <td className="px-3 py-1.5 w-10">
+                    <input
+                        type="checkbox"
+                        checked={!!bulkSelected}
+                        onChange={() => onToggleBulkSelect && onToggleBulkSelect(lead.id)}
+                        onClick={e => e.stopPropagation()}
+                        className="w-4 h-4 rounded border-white/20 bg-white/5 text-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
+                    />
+                </td>
+            )}
             <td className="px-2 py-1.5 overflow-hidden" style={{ width: colWidths.opportunity }}>
                 <button
                     onClick={() => onLeadClick && onLeadClick(lead)}
@@ -309,11 +384,13 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
             <td className="px-2 py-1.5">
                 <input
                     type="text"
-                    value={localNote}
+                    value={noteFocused ? localNote : (localNote || latestNoteText)}
                     onChange={(e) => setLocalNote(e.target.value)}
+                    onFocus={handleNoteFocus}
                     onBlur={handleNoteBlur}
-                    placeholder="Add interaction note..."
-                    className="w-full bg-transparent border-none outline-none text-xs text-gray-400 placeholder:text-gray-700 hover:text-white transition-colors focus:text-white truncate"
+                    placeholder={latestNoteText ? '' : 'Add interaction note...'}
+                    title={latestNoteText ? `Latest: ${latestNoteText}` : 'Add interaction note'}
+                    className={`w-full bg-transparent border-none outline-none text-xs transition-colors focus:text-white truncate ${noteFocused ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}
                 />
             </td>
 
@@ -347,7 +424,7 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
     );
 });
 
-export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentUser, onUpdate, onPatch, onDelete, showAgentColumn, onLeadClick, isLoading }) => {
+export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentUser, onUpdate, onPatch, onDelete, showAgentColumn, onLeadClick, isLoading, bulkSelectedIds, onToggleBulkSelect, bulkSelectEnabled }) => {
     const [page, setPage] = useState(0);
 
     // Reset to page 0 whenever the leads list or active tab changes
@@ -423,9 +500,41 @@ export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentU
         </th>
     );
 
+    const allVisibleSelected = bulkSelectEnabled && leads.length > 0 && leads.every(l => bulkSelectedIds?.has(l.id));
+    const toggleSelectAllVisible = () => {
+        if (!onToggleBulkSelect) return;
+        if (allVisibleSelected) {
+            leads.forEach(l => onToggleBulkSelect(l.id));
+        } else {
+            leads.filter(l => !bulkSelectedIds?.has(l.id)).forEach(l => onToggleBulkSelect(l.id));
+        }
+    };
+
+    const renderScheduledHeader = () => (
+        <thead className="bg-white/[0.02] border-b border-white/[0.05]">
+            <tr>
+                <th className="px-2 py-3 text-left text-[9px] font-black text-muted uppercase tracking-widest">Name</th>
+                <th className="px-2 py-3 text-left text-[9px] font-black text-muted uppercase tracking-widest">Status</th>
+                <th className="px-2 py-3 text-left text-[9px] font-black text-muted uppercase tracking-widest">Surfaces on</th>
+                {showAgentColumn && <th className="px-2 py-3 text-left text-[9px] font-black text-muted uppercase tracking-widest">Agent</th>}
+                <th className="px-2 py-3 text-center text-[9px] font-black text-muted uppercase tracking-widest">Logs</th>
+            </tr>
+        </thead>
+    );
+
     const renderHeader = () => (
         <thead className="bg-white/[0.02] border-b border-white/[0.05]">
             <tr>
+                {bulkSelectEnabled && (
+                    <th className="px-3 py-3 w-10">
+                        <input
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            onChange={toggleSelectAllVisible}
+                            className="w-4 h-4 rounded border-white/20 bg-white/5 text-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
+                        />
+                    </th>
+                )}
                 <HeaderCell label="Name" colKey="opportunity" width={colWidths.opportunity} />
                 <HeaderCell label="Link" colKey="asset" width={colWidths.asset} />
                 <HeaderCell label="Priority" colKey="priority" width={colWidths.priority} />
@@ -465,7 +574,7 @@ export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentU
         <div className="dashboard-card overflow-hidden shadow-2xl animate-scale-in">
             <div className="overflow-x-auto custom-scrollbar">
                 <table className="min-w-full border-collapse table-fixed">
-                    {renderHeader()}
+                    {activeTab === 'scheduled' ? renderScheduledHeader() : renderHeader()}
                     <tbody className="divide-y divide-white/[0.03]">
                         {isLoading
                             ? Array.from({ length: 10 }).map((_, i) => <SkeletonRow key={i} />)
@@ -481,6 +590,9 @@ export const LeadTable: React.FC<LeadTableProps> = ({ leads, activeTab, currentU
                                     onDelete={onDelete}
                                     onLeadClick={onLeadClick}
                                     colWidths={colWidths}
+                                    bulkSelectEnabled={bulkSelectEnabled}
+                                    bulkSelected={bulkSelectedIds?.has(lead.id) || false}
+                                    onToggleBulkSelect={onToggleBulkSelect}
                                 />
                             ))
                         }
