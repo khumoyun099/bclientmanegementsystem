@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => {
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
+          '@pulse': path.resolve(__dirname, 'features/pulse'),
         }
       },
       test: {

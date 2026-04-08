@@ -22,6 +22,12 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@pulse": [
+        "./features/pulse/index.ts"
+      ],
+      "@pulse/*": [
+        "./features/pulse/*"
       ]
     },
     "allowImportingTsExtensions": true,

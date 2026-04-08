@@ -1,0 +1,142 @@
+/**
+ * Pulse data-access layer. All Supabase reads for the Pulse feature live
+ * here and nowhere else. Kept out of the main `services/db.ts` so the
+ * legacy service is untouched and the Pulse feature is deletable as a unit.
+ */
+
+import { supabase } from '../../../services/supabase';
+import type { PulseFeedItem, PulsePlaybook } from '../types/pulse.types';
+
+/**
+ * Return the categorized Pulse feed for the given agent. If `agentId` is
+ * omitted, the RPC returns the caller's own feed (or the full team feed
+ * when the caller is admin). Enforcement happens inside the SQL function
+ * via `public.is_admin()` + `auth.uid()`, not here.
+ */
+export async function getPulseFeed(agentId?: string | null): Promise<PulseFeedItem[]> {
+  const { data, error } = await supabase.rpc('get_pulse_feed', {
+    p_agent_id: agentId ?? null,
+  });
+  if (error) {
+    console.error('getPulseFeed failed:', error);
+    return [];
+  }
+  return (data ?? []) as PulseFeedItem[];
+}
+
+/**
+ * Fetch the currently active playbook row. Returns null if no active row
+ * exists (shouldn't happen post-migration but we handle it gracefully).
+ */
+export async function getActivePlaybook(): Promise<PulsePlaybook | null> {
+  const { data, error } = await supabase
+    .from('pulse_playbook')
+    .select('*')
+    .eq('active', true)
+    .maybeSingle();
+  if (error) {
+    console.error('getActivePlaybook failed:', error);
+    return null;
+  }
+  return data as PulsePlaybook | null;
+}
+
+/** List every playbook version (newest first) for the admin editor. */
+export async function listPlaybookVersions(): Promise<PulsePlaybook[]> {
+  const { data, error } = await supabase
+    .from('pulse_playbook')
+    .select('*')
+    .order('version', { ascending: false });
+  if (error) {
+    console.error('listPlaybookVersions failed:', error);
+    return [];
+  }
+  return (data ?? []) as PulsePlaybook[];
+}
+
+/**
+ * Save a new playbook version. The new version becomes the only active row
+ * (the unique partial index on `active` enforces this). We perform the flip
+ * as two statements so the window where zero rows are active is minimal;
+ * if the insert fails, the old active row stays active.
+ */
+export async function savePlaybook(params: {
+  content_md: string;
+  notes?: string;
+  created_by: string;
+}): Promise<PulsePlaybook | null> {
+  // Find current highest version so we can increment.
+  const { data: latest } = await supabase
+    .from('pulse_playbook')
+    .select('version')
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const nextVersion = (latest?.version ?? 0) + 1;
+
+  // Insert the new row first (inactive), then flip active in a transaction-
+  // like sequence. Because the unique partial index allows only one active
+  // row, we must deactivate the old one in the same step.
+  const { data: inserted, error: insertErr } = await supabase
+    .from('pulse_playbook')
+    .insert({
+      version: nextVersion,
+      content_md: params.content_md,
+      notes: params.notes ?? null,
+      created_by: params.created_by,
+      active: false,
+    })
+    .select()
+    .single();
+
+  if (insertErr || !inserted) {
+    console.error('savePlaybook insert failed:', insertErr);
+    throw insertErr;
+  }
+
+  // Deactivate previously active row(s)
+  const { error: deactErr } = await supabase
+    .from('pulse_playbook')
+    .update({ active: false })
+    .eq('active', true);
+  if (deactErr) {
+    console.error('savePlaybook deactivate failed:', deactErr);
+    throw deactErr;
+  }
+
+  // Activate the new version
+  const { data: activated, error: actErr } = await supabase
+    .from('pulse_playbook')
+    .update({ active: true })
+    .eq('id', inserted.id)
+    .select()
+    .single();
+
+  if (actErr || !activated) {
+    console.error('savePlaybook activate failed:', actErr);
+    throw actErr;
+  }
+
+  return activated as PulsePlaybook;
+}
+
+/** Roll back to an older playbook version by making it active. */
+export async function activatePlaybookVersion(id: string): Promise<void> {
+  const { error: deactErr } = await supabase
+    .from('pulse_playbook')
+    .update({ active: false })
+    .eq('active', true);
+  if (deactErr) throw deactErr;
+
+  const { error: actErr } = await supabase
+    .from('pulse_playbook')
+    .update({ active: true })
+    .eq('id', id);
+  if (actErr) throw actErr;
+}
+
+// NOTE: `refresh_pulse_signals()` is granted to service_role only (see
+// features/pulse/db/0006_pulse.sql). Clients do NOT trigger recomputes;
+// the pg_cron job runs every 15 minutes. The UI refresh button simply
+// re-reads `get_pulse_feed` so agents see the latest stored snapshot.

@@ -15,6 +15,7 @@ import { Auth } from './components/Auth';
 import { DatabaseSetup } from './components/DatabaseSetup';
 import { TeamStatsPage } from './components/TeamStatsPage';
 import { Dashboard } from './components/Dashboard';
+import { PlaybookEditor } from './features/pulse';
 import { MyTasks } from './components/MyTasks';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap, AlertTriangle, Copy, Check, Link, ChevronDown, X, ExternalLink, Trash2, CalendarClock } from 'lucide-react';
@@ -492,7 +493,14 @@ const App: React.FC = () => {
 
         {activePage === 'dashboard' && (
           <ErrorBoundary>
-            <Dashboard leads={leads} currentUser={currentUser} onUpdate={() => refreshData()} isLoading={loading} />
+            <Dashboard
+              leads={leads}
+              currentUser={currentUser}
+              onUpdate={() => refreshData()}
+              isLoading={loading}
+              allUsers={allUsers}
+              onPatch={patchLeadLocally}
+            />
           </ErrorBoundary>
         )}
 
@@ -864,6 +872,16 @@ const App: React.FC = () => {
             <ErrorBoundary>
               <AccountabilityDashboard users={allUsers} leads={leads} logs={activityLogs} onSelectLead={(lead) => setSelectedLeadId(lead.id)} onRefresh={refreshData} />
             </ErrorBoundary>
+
+            {/* Sales Playbook — admin teaches the AI the team's sales doctrine.
+                Editable immediately even though Pulse-1 doesn't use it for
+                narration yet; Pulse-2 will consume the active version. */}
+            <div className="pt-10">
+              <ErrorBoundary>
+                <PlaybookEditor currentUser={currentUser} />
+              </ErrorBoundary>
+            </div>
+
             <div className="pt-10">
               <ErrorBoundary>
                 <TeamStatsPage currentUser={currentUser} />
