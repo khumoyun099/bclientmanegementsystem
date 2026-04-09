@@ -125,17 +125,23 @@ export const AgentHealthSection: React.FC<AgentHealthSectionProps> = ({
       </button>
 
       {expanded && (
-        <div className="border-t border-white/5 divide-y divide-white/5 bg-[#0c0c0c]/40">
-          {scored.map(({ user, rollup, flags, concern }) => (
-            <AgentHealthRow
-              key={user.id}
-              user={user}
-              rollup={rollup}
-              flags={flags}
-              concern={concern}
-              onSelect={() => onSelectAgent(user.id)}
-            />
-          ))}
+        // Two-column grid on lg+ screens. Same pattern as PulseSection
+        // — 1px gap with a subtle line background creates the vertical
+        // column separator, each row keeps its own bottom border.
+        <div className="border-t border-white/5 bg-[#0c0c0c]/40">
+          <div className="grid grid-cols-1 lg:grid-cols-2 lg:gap-x-px lg:bg-white/5">
+            {scored.map(({ user, rollup, flags, concern }) => (
+              <div key={user.id} className="bg-[#0c0c0c]/60">
+                <AgentHealthRow
+                  user={user}
+                  rollup={rollup}
+                  flags={flags}
+                  concern={concern}
+                  onSelect={() => onSelectAgent(user.id)}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -170,7 +176,7 @@ const AgentHealthRow: React.FC<AgentHealthRowProps> = ({
     <button
       type="button"
       onClick={onSelect}
-      className="w-full group flex items-center justify-between px-5 py-3 hover:bg-white/[0.02] transition-colors text-left"
+      className="w-full h-full group flex items-center justify-between px-5 py-3 hover:bg-white/[0.02] transition-colors text-left border-b border-white/5"
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">

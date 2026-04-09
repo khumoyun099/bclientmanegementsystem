@@ -34,7 +34,7 @@ export const PulseItem: React.FC<PulseItemProps> = ({ item, onOpen, showAgent })
   return (
     <div
       onClick={() => onOpen(item.lead_id)}
-      className="group flex items-center gap-3 px-4 py-2 hover:bg-white/[0.02] border-b border-white/5 last:border-b-0 transition-colors cursor-pointer"
+      className="group flex items-center gap-3 px-4 py-2 hover:bg-white/[0.02] border-b border-white/5 transition-colors cursor-pointer h-full"
     >
       <div className="flex-1 min-w-0">
         {/* Line 1: identity + signal */}

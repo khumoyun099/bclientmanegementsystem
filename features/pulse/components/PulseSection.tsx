@@ -83,15 +83,20 @@ export const PulseSection: React.FC<PulseSectionProps> = ({
       </button>
 
       {expanded && (
-        <div className="border-t border-white/5 divide-y divide-white/5 bg-[#0c0c0c]/40">
-          {items.map(item => (
-            <PulseItem
-              key={item.lead_id}
-              item={item}
-              onOpen={onOpen}
-              showAgent={showAgent}
-            />
-          ))}
+        // Items flow into two columns on lg+ screens (≥1024px). The
+        // outer container has a 1-pixel column gap with a subtle line
+        // background, which becomes the vertical separator between
+        // the two columns. Each item carries its own bottom border for
+        // the row separators within each column. On narrow screens it
+        // collapses back to a single column.
+        <div className="border-t border-white/5 bg-[#0c0c0c]/40">
+          <div className="grid grid-cols-1 lg:grid-cols-2 lg:gap-x-px lg:bg-white/5">
+            {items.map(item => (
+              <div key={item.lead_id} className="bg-[#0c0c0c]/60">
+                <PulseItem item={item} onOpen={onOpen} showAgent={showAgent} />
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
