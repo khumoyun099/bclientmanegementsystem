@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { Brain, RefreshCw, Loader2, CheckCircle2 } from 'lucide-react';
+import { Brain, RefreshCw, Loader2, CheckCircle2, Sparkles } from 'lucide-react';
 import { usePulseFeed } from '../hooks/usePulseFeed';
 import { groupByCategory } from '../lib/categorize';
 import { PulseSection } from './PulseSection';
@@ -20,7 +20,8 @@ interface PulseFeedProps {
 }
 
 export const PulseFeed: React.FC<PulseFeedProps> = ({ agentId, showAgent, onOpenLead }) => {
-  const { data, loading, error, refresh, lastRefreshedAt } = usePulseFeed(agentId);
+  const { data, loading, error, refresh, lastRefreshedAt, narrating, aiEnabled } =
+    usePulseFeed(agentId);
   const groups = groupByCategory(data);
   const totalCount = data.length;
 
@@ -35,13 +36,23 @@ export const PulseFeed: React.FC<PulseFeedProps> = ({ agentId, showAgent, onOpen
             <h2 className="text-sm font-bold text-white uppercase tracking-wider">
               Pulse &mdash; leads that need you today
             </h2>
-            <p className="text-[10px] text-muted mt-0.5">
+            <p className="text-[10px] text-muted mt-0.5 flex items-center gap-1.5">
               {loading && totalCount === 0
                 ? 'Computing signals…'
                 : totalCount === 0
                 ? 'Nothing urgent. Keep it up.'
                 : `${totalCount} action${totalCount === 1 ? '' : 's'} ranked by neglect risk`}
               {lastRefreshedAt && ` · updated ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+              {narrating && (
+                <span className="inline-flex items-center gap-1 text-brand-400/70">
+                  · <Sparkles size={9} className="animate-pulse" /> coach thinking…
+                </span>
+              )}
+              {!aiEnabled && !narrating && totalCount > 0 && (
+                <span className="inline-flex items-center gap-1 text-amber-400/70">
+                  · AI off — showing rule-based tips
+                </span>
+              )}
             </p>
           </div>
         </div>

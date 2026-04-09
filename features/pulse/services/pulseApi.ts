@@ -140,3 +140,121 @@ export async function activatePlaybookVersion(id: string): Promise<void> {
 // features/pulse/db/0006_pulse.sql). Clients do NOT trigger recomputes;
 // the pg_cron job runs every 15 minutes. The UI refresh button simply
 // re-reads `get_pulse_feed` so agents see the latest stored snapshot.
+
+// ---------------------------------------------------------------------------
+// Pulse-2: AI insight generation via the `pulse-generate-insight` edge fn.
+// ---------------------------------------------------------------------------
+
+import type { PulseCategory } from '../types/pulse.types';
+
+export interface AiInsight {
+  lead_id: string;
+  kind: string;
+  title: string;
+  body: string;
+  category: PulseCategory | string;
+  expires_at: string;
+}
+
+export interface GenerateInsightsRequest {
+  /** The agent the insights are FOR (admin may differ from caller). */
+  agent_id: string;
+  agent_name?: string;
+  leads: Array<{
+    lead_id: string;
+    name: string;
+    status: string;
+    category: string;
+    silence_score: number | null;
+    days_overdue: number | null;
+    days_since_last_touch: number | null;
+    reschedule_streak: number | null;
+    every_days: number | null;
+    last_note_text: string | null;
+  }>;
+}
+
+export interface GenerateInsightsResponse {
+  insights: AiInsight[];
+  generated: number;
+  cached: number;
+  skipped: number;
+  ai_enabled: boolean;
+  ai_error?: boolean;
+  rate_limited?: boolean;
+  error?: string;
+}
+
+/**
+ * Invoke the Pulse insight generation edge function. The function handles
+ * caching, rate limiting, and the kill switch internally; the client just
+ * passes in the current feed and receives insights back.
+ *
+ * Fails soft: on ANY error it returns an empty response so the UI falls
+ * back to the deterministic narrative from Pulse-1 without crashing.
+ */
+export async function generateInsightsBatch(
+  req: GenerateInsightsRequest,
+): Promise<GenerateInsightsResponse> {
+  try {
+    const { data, error } = await supabase.functions.invoke<GenerateInsightsResponse>(
+      'pulse-generate-insight',
+      { body: req },
+    );
+    if (error) {
+      console.warn('pulse-generate-insight invoke error:', error.message);
+      return {
+        insights: [],
+        generated: 0,
+        cached: 0,
+        skipped: 0,
+        ai_enabled: false,
+        ai_error: true,
+      };
+    }
+    return (
+      data ?? {
+        insights: [],
+        generated: 0,
+        cached: 0,
+        skipped: 0,
+        ai_enabled: false,
+      }
+    );
+  } catch (err) {
+    console.warn('pulse-generate-insight threw:', err);
+    return {
+      insights: [],
+      generated: 0,
+      cached: 0,
+      skipped: 0,
+      ai_enabled: false,
+      ai_error: true,
+    };
+  }
+}
+
+/**
+ * Fetch any currently-cached insights for a given agent from the
+ * `pulse_insights` table directly (bypasses the edge function). Useful
+ * for immediate paint before the edge function round-trips. Returns an
+ * empty array on any failure.
+ */
+export async function getCachedInsights(agentId: string): Promise<AiInsight[]> {
+  try {
+    const { data, error } = await supabase
+      .from('pulse_insights')
+      .select('lead_id, kind, title, body, category, expires_at')
+      .eq('agent_id', agentId)
+      .is('dismissed_at', null)
+      .gt('expires_at', new Date().toISOString());
+    if (error) {
+      console.warn('getCachedInsights failed:', error.message);
+      return [];
+    }
+    return (data ?? []) as AiInsight[];
+  } catch (err) {
+    console.warn('getCachedInsights threw:', err);
+    return [];
+  }
+}
