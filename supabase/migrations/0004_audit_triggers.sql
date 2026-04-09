@@ -89,9 +89,20 @@ begin
     end if;
     return new;
   elsif tg_op = 'DELETE' then
+    -- CRITICAL: lead_id MUST be NULL here. The lead row has already
+    -- been removed by the time this AFTER DELETE trigger fires, so
+    -- referencing old.id would violate the FK constraint and roll back
+    -- the entire DELETE statement. We preserve forensic value by
+    -- recording the lead's original UUID + name in the details text.
     insert into public.activity_logs(lead_id, agent_id, action, details)
-      values (old.id, coalesce(auth.uid(), old.assigned_agent_id), 'deleted',
-              format('Lead "%s" permanently deleted (trigger)', coalesce(old.name, old.id::text)));
+      values (
+        NULL,
+        coalesce(auth.uid(), old.assigned_agent_id),
+        'deleted',
+        format('Lead "%s" (id: %s) permanently deleted (trigger)',
+               coalesce(old.name, '—'),
+               old.id::text)
+      );
     return old;
   end if;
   return null;

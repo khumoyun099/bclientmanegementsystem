@@ -1,29 +1,36 @@
 -- ============================================================================
--- 0007_hotfix_lead_trigger_and_theme.sql
+-- 0009_fix_delete_trigger.sql
 -- ----------------------------------------------------------------------------
--- Two production hotfixes discovered after Phase 2 + Phase 6 went live:
+-- Hotfix: every DELETE on `leads` was failing because of a latent bug in
+-- the Phase 2 audit trigger from 0004_audit_triggers.sql.
 --
--- 1. `log_lead_change()` trigger crashes when follow_up_date changes.
---    My trigger assumed `leads.follow_up_date` is TEXT (what types.ts and
---    the baseline migration declare), but production has it as DATE.
---    `coalesce(date_col, '—')` tries to cast the em-dash to date and fails
---    with "22007: invalid input syntax for type date". The fix is to cast
---    every potentially-nullable column to text BEFORE coalescing the '—'
---    placeholder — this works whether the underlying column is text or date.
+-- WHY IT BROKE:
+--   The AFTER DELETE branch of `log_lead_change` tried to insert an
+--   audit row into `activity_logs` with `lead_id = old.id`. By the time
+--   the trigger fires, the lead row has already been removed from
+--   `leads`. The FK constraint on `activity_logs.lead_id` then rejects
+--   the insert because the referenced lead no longer exists, and the
+--   whole DELETE rolls back. Result: "Failed to delete lead" /
+--   "Bulk delete failed" toasts on every delete attempt.
 --
--- 2. `profiles.theme_preference` column is missing in production.
---    The baseline migration used CREATE TABLE IF NOT EXISTS, so the column
---    was never added to the pre-existing profiles table. The client fires
---    updateThemePreference on every re-render, each one 400s with
---    PGRST204 "Could not find the 'theme_preference' column". Noisy but
---    not breaking any feature.
+--   The ON DELETE SET NULL FK fix in 0004 only handles existing audit
+--   rows that referenced the deleted lead. It does NOT help new INSERTs
+--   that try to reference the just-deleted lead within the same
+--   statement.
 --
--- Safe to re-run. Idempotent. No RLS changes, no data changes.
+-- THE FIX:
+--   On DELETE, insert with `lead_id = NULL`. The lead reference is gone
+--   anyway (the row was just removed), and the original lead name +
+--   UUID are preserved in the human-readable `details` text so admin
+--   forensics still work — they just search activity_logs by name
+--   instead of by lead_id.
+--
+--   UPDATE branches are unchanged — they always run before the row is
+--   gone, so their FK references are valid.
+--
+-- Safe to re-run. Idempotent (CREATE OR REPLACE).
 -- ============================================================================
 
--- ---- Fix 1: patched log_lead_change() trigger function ---------------------
--- Only change vs 0004: every column is cast to ::text before coalesce so the
--- '—' placeholder is always a safe type match. Everything else is identical.
 create or replace function public.log_lead_change()
 returns trigger
 language plpgsql
@@ -77,10 +84,14 @@ begin
                        coalesce(new.assigned_agent_name, new.assigned_agent_id::text, '—')));
     end if;
     return new;
+
   elsif tg_op = 'DELETE' then
-    -- CRITICAL: lead_id MUST be NULL here. See 0009_fix_delete_trigger.sql
-    -- for the full explanation. Inserting with old.id violates the FK
-    -- because the lead row has already been removed by AFTER DELETE.
+    -- CRITICAL: lead_id MUST be NULL here. The lead row has already
+    -- been removed by the time this AFTER DELETE trigger fires, so
+    -- referencing old.id would violate the FK constraint and roll back
+    -- the entire DELETE statement. Storing the original UUID + name in
+    -- the human-readable `details` column preserves forensic value
+    -- without breaking the foreign key.
     insert into public.activity_logs(lead_id, agent_id, action, details)
       values (
         NULL,
@@ -95,13 +106,3 @@ begin
   return null;
 end;
 $$;
-
--- Trigger itself is unchanged — the function body replacement is what fixes it.
-
--- ---- Fix 2: add missing profiles.theme_preference column -------------------
-alter table public.profiles
-  add column if not exists theme_preference text default 'dark';
-
--- Tell PostgREST to reload its schema cache so the new column is visible
--- to the REST API immediately (no need to wait for the automatic reload).
-notify pgrst, 'reload schema';
