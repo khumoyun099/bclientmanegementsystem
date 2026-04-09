@@ -234,6 +234,91 @@ export async function generateInsightsBatch(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pulse-3: morning briefing via the `pulse-generate-briefing` edge fn.
+// ---------------------------------------------------------------------------
+
+export interface BriefingRow {
+  id: string;
+  agent_id: string;
+  for_date: string;
+  body_md: string;
+  priority_lead_ids: string[];
+  meta: Record<string, unknown> | null;
+  created_at: string;
+  read_at: string | null;
+}
+
+export interface BriefingResponse {
+  briefing: BriefingRow | null;
+  generated: boolean;
+  cached: boolean;
+  ai_enabled: boolean;
+  ai_error?: boolean;
+  error?: string;
+}
+
+/** Read today's briefing for an agent directly from the table (cache-only). */
+export async function getTodayBriefing(agentId: string): Promise<BriefingRow | null> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from('pulse_briefings')
+    .select('id, agent_id, for_date, body_md, priority_lead_ids, meta, created_at, read_at')
+    .eq('agent_id', agentId)
+    .eq('for_date', today)
+    .maybeSingle();
+  if (error) {
+    console.warn('getTodayBriefing failed:', error.message);
+    return null;
+  }
+  return (data ?? null) as BriefingRow | null;
+}
+
+/**
+ * Invoke the briefing edge function. It returns the cached row if one
+ * already exists for today, or generates a new one on the fly. Fails soft.
+ */
+export async function generateBriefing(params: {
+  agent_id: string;
+  agent_name?: string;
+}): Promise<BriefingResponse> {
+  try {
+    const { data, error } = await supabase.functions.invoke<BriefingResponse>(
+      'pulse-generate-briefing',
+      { body: params },
+    );
+    if (error) {
+      console.warn('pulse-generate-briefing invoke error:', error.message);
+      return {
+        briefing: null,
+        generated: false,
+        cached: false,
+        ai_enabled: false,
+        ai_error: true,
+      };
+    }
+    return data ?? { briefing: null, generated: false, cached: false, ai_enabled: false };
+  } catch (err) {
+    console.warn('pulse-generate-briefing threw:', err);
+    return {
+      briefing: null,
+      generated: false,
+      cached: false,
+      ai_enabled: false,
+      ai_error: true,
+    };
+  }
+}
+
+/** Mark today's briefing as read/dismissed. */
+export async function dismissBriefing(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('pulse_briefings')
+    .update({ read_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) console.warn('dismissBriefing failed:', error.message);
+}
+
 /**
  * Fetch any currently-cached insights for a given agent from the
  * `pulse_insights` table directly (bypasses the edge function). Useful

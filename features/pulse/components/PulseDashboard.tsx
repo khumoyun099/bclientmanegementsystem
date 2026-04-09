@@ -18,6 +18,7 @@ import { PointsDashboard } from '../../../components/PointsDashboard';
 import { KpiStrip } from './KpiStrip';
 import { PulseFeed } from './PulseFeed';
 import { AdminAgentFilter } from './AdminAgentFilter';
+import { MorningBriefing } from './MorningBriefing';
 import { LeadDetailModal } from '../../../components/LeadDetailModal';
 
 interface PulseDashboardProps {
@@ -77,8 +78,18 @@ export const PulseDashboard: React.FC<PulseDashboardProps> = ({
         </p>
       </div>
 
-      {/* (Pulse-3 slot) Morning briefing. In Pulse-1 this is nothing. */}
-      {/* <MorningBriefing agentId={effectiveAgentId ?? currentUser.id} /> */}
+      {/* Morning Briefing — one per agent per day. Only renders for a
+          specific agent (not admin whole-team view) and auto-hides if
+          already dismissed today. Pulls name from the filtered agent
+          when admin, else the current user. */}
+      <MorningBriefing
+        agentId={effectiveAgentId}
+        agentName={
+          isAdmin && adminFilterAgentId
+            ? allUsers.find(u => u.id === adminFilterAgentId)?.name
+            : currentUser.name
+        }
+      />
 
       {/* KPI strip */}
       <KpiStrip leads={visibleLeads} />
