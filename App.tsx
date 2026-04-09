@@ -499,6 +499,7 @@ const App: React.FC = () => {
               onUpdate={() => refreshData()}
               isLoading={loading}
               allUsers={allUsers}
+              activityLogs={activityLogs}
               onPatch={patchLeadLocally}
             />
           </ErrorBoundary>

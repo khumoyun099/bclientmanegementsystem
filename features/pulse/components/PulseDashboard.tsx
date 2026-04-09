@@ -13,12 +13,13 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Lead, Role, User } from '../../../types';
+import { ActivityLog, Lead, Role, User } from '../../../types';
 import { PointsDashboard } from '../../../components/PointsDashboard';
 import { KpiStrip } from './KpiStrip';
 import { PulseFeed } from './PulseFeed';
 import { AdminAgentFilter } from './AdminAgentFilter';
 import { MorningBriefing } from './MorningBriefing';
+import { AgentHealthSection } from './AgentHealthSection';
 import { LeadDetailModal } from '../../../components/LeadDetailModal';
 
 interface PulseDashboardProps {
@@ -28,6 +29,8 @@ interface PulseDashboardProps {
   isLoading?: boolean;
   /** All users — needed for the admin agent filter. Optional for agents. */
   allUsers?: User[];
+  /** Admin-only activity log stream, needed for agent health rollups. */
+  activityLogs?: ActivityLog[];
   /** Handler from App.tsx that knows how to patch a lead in place. */
   onPatch?: (id: string, updates: Partial<Lead>) => void;
 }
@@ -38,6 +41,7 @@ export const PulseDashboard: React.FC<PulseDashboardProps> = ({
   onUpdate,
   isLoading,
   allUsers = [],
+  activityLogs = [],
   onPatch,
 }) => {
   const isAdmin = currentUser.role === Role.ADMIN;
@@ -81,7 +85,9 @@ export const PulseDashboard: React.FC<PulseDashboardProps> = ({
       {/* Morning Briefing — one per agent per day. Only renders for a
           specific agent (not admin whole-team view) and auto-hides if
           already dismissed today. Pulls name from the filtered agent
-          when admin, else the current user. */}
+          when admin, else the current user. Admin sees a regenerate
+          button so they can force a fresh briefing after editing the
+          Playbook. */}
       <MorningBriefing
         agentId={effectiveAgentId}
         agentName={
@@ -89,6 +95,7 @@ export const PulseDashboard: React.FC<PulseDashboardProps> = ({
             ? allUsers.find(u => u.id === adminFilterAgentId)?.name
             : currentUser.name
         }
+        canRegenerate={isAdmin}
       />
 
       {/* KPI strip */}
@@ -100,6 +107,18 @@ export const PulseDashboard: React.FC<PulseDashboardProps> = ({
           agents={filterAgents}
           selectedAgentId={adminFilterAgentId}
           onChange={setAdminFilterAgentId}
+        />
+      )}
+
+      {/* Agent Health — admin whole-team view only. Ranks agents by
+          deterministic concern score and lets admin jump into any
+          agent's detail view with one click. */}
+      {isAdmin && !adminFilterAgentId && (
+        <AgentHealthSection
+          users={allUsers}
+          leads={leads}
+          activityLogs={activityLogs}
+          onSelectAgent={(id) => setAdminFilterAgentId(id)}
         />
       )}
 

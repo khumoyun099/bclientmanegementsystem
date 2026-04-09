@@ -29,6 +29,8 @@ interface UsePulseBriefingResult {
   generating: boolean;
   /** Mark today's briefing as read and hide it. */
   dismiss: () => Promise<void>;
+  /** Admin only: bypass cache and regenerate today's briefing. */
+  regenerate: () => Promise<void>;
 }
 
 export function usePulseBriefing(
@@ -86,5 +88,23 @@ export function usePulseBriefing(
     await dismissBriefing(briefing.id);
   }, [briefing]);
 
-  return { briefing, loading, generating, dismiss };
+  const regenerate = useCallback(async () => {
+    if (!agentId) return;
+    setGenerating(true);
+    try {
+      const resp = await generateBriefing({
+        agent_id: agentId,
+        agent_name: agentName,
+        force_regenerate: true,
+      });
+      if (cancelled.current) return;
+      if (resp.briefing) setBriefing(resp.briefing);
+    } catch (err) {
+      console.warn('usePulseBriefing regenerate failed:', err);
+    } finally {
+      if (!cancelled.current) setGenerating(false);
+    }
+  }, [agentId, agentName]);
+
+  return { briefing, loading, generating, dismiss, regenerate };
 }

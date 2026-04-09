@@ -10,16 +10,23 @@
  */
 
 import React from 'react';
-import { Sparkles, X, Loader2, Sunrise } from 'lucide-react';
+import { Sparkles, X, Loader2, Sunrise, RefreshCw } from 'lucide-react';
 import { usePulseBriefing } from '../hooks/usePulseBriefing';
 
 interface MorningBriefingProps {
   agentId: string | null | undefined;
   agentName: string | undefined;
+  /** Admin-only: shows a "Regenerate" button that bypasses the cache. */
+  canRegenerate?: boolean;
 }
 
-export const MorningBriefing: React.FC<MorningBriefingProps> = ({ agentId, agentName }) => {
-  const { briefing, loading, generating, dismiss } = usePulseBriefing(agentId, agentName);
+export const MorningBriefing: React.FC<MorningBriefingProps> = ({
+  agentId,
+  agentName,
+  canRegenerate = false,
+}) => {
+  const { briefing, loading, generating, dismiss, regenerate } =
+    usePulseBriefing(agentId, agentName);
 
   // No agent selected (admin whole-team view) — render nothing.
   if (!agentId) return null;
@@ -91,13 +98,25 @@ export const MorningBriefing: React.FC<MorningBriefingProps> = ({ agentId, agent
             </p>
           </div>
         </div>
-        <button
-          onClick={() => void dismiss()}
-          className="p-1.5 rounded-lg text-muted hover:text-white hover:bg-white/5 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
-          title="Dismiss until tomorrow"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-1">
+          {canRegenerate && (
+            <button
+              onClick={() => void regenerate()}
+              disabled={generating}
+              className="p-1.5 rounded-lg text-muted hover:text-brand-400 hover:bg-brand-500/10 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-40"
+              title="Regenerate briefing from scratch (admin only)"
+            >
+              <RefreshCw size={13} className={generating ? 'animate-spin' : ''} />
+            </button>
+          )}
+          <button
+            onClick={() => void dismiss()}
+            className="p-1.5 rounded-lg text-muted hover:text-white hover:bg-white/5 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
+            title="Dismiss until tomorrow"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Body */}

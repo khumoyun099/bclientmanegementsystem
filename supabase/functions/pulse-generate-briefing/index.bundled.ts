@@ -279,6 +279,8 @@ const MAX_LEADS_IN_BRIEFING = 5;
 interface RequestBody {
   agent_id: string;
   agent_name?: string;
+  /** Admin-only: bypass today's cached briefing and generate a fresh one. */
+  force_regenerate?: boolean;
 }
 
 interface BriefingJson {
@@ -323,23 +325,28 @@ Deno.serve(async (req) => {
     const serviceClient = createServiceClient();
     const today = new Date().toISOString().slice(0, 10);
 
-    // Cache lookup
-    const { data: cached, error: cacheErr } = await userClient
-      .from('pulse_briefings')
-      .select('id, for_date, body_md, priority_lead_ids, created_at, read_at, meta')
-      .eq('agent_id', body.agent_id)
-      .eq('for_date', today)
-      .maybeSingle();
+    // Cache lookup — skipped entirely if the caller explicitly asked
+    // to regenerate (admin "Regenerate" button). We still upsert the
+    // fresh row on the same (agent_id, for_date) so the cache stays
+    // consistent for subsequent reads.
+    if (!body.force_regenerate) {
+      const { data: cached, error: cacheErr } = await userClient
+        .from('pulse_briefings')
+        .select('id, for_date, body_md, priority_lead_ids, created_at, read_at, meta')
+        .eq('agent_id', body.agent_id)
+        .eq('for_date', today)
+        .maybeSingle();
 
-    if (cacheErr) console.warn('briefing cache lookup failed:', cacheErr.message);
+      if (cacheErr) console.warn('briefing cache lookup failed:', cacheErr.message);
 
-    if (cached) {
-      return jsonResponse({
-        briefing: cached,
-        generated: false,
-        cached: true,
-        ai_enabled: aiEnabled(),
-      });
+      if (cached) {
+        return jsonResponse({
+          briefing: cached,
+          generated: false,
+          cached: true,
+          ai_enabled: aiEnabled(),
+        });
+      }
     }
 
     if (!aiEnabled()) {

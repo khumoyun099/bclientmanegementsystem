@@ -277,10 +277,15 @@ export async function getTodayBriefing(agentId: string): Promise<BriefingRow | n
 /**
  * Invoke the briefing edge function. It returns the cached row if one
  * already exists for today, or generates a new one on the fly. Fails soft.
+ *
+ * Pass `force_regenerate: true` (admin only) to bypass the cache and
+ * generate a fresh briefing — useful right after editing the Playbook
+ * to see the new doctrine reflected without waiting until tomorrow.
  */
 export async function generateBriefing(params: {
   agent_id: string;
   agent_name?: string;
+  force_regenerate?: boolean;
 }): Promise<BriefingResponse> {
   try {
     const { data, error } = await supabase.functions.invoke<BriefingResponse>(
