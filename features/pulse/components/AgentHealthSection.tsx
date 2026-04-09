@@ -51,10 +51,16 @@ function flagsFor(r: AgentHealthRollup): string[] {
   const out: string[] = [];
   if (r.overdueCount > 0) out.push(`${r.overdueCount} overdue`);
   if (r.rescheduledCount > 0) out.push(`${r.rescheduledCount} stuck rescheduling`);
-  if (r.missingFreqCount > 0) out.push(`${r.missingFreqCount} no cadence`);
-  if (r.staleCount > 0) out.push(`${r.staleCount} stale`);
-  if (r.averageSilenceScore > 1.3) {
-    out.push(`${r.averageSilenceScore.toFixed(1)}× avg silence`);
+  if (r.missingFreqCount > 0) out.push(`${r.missingFreqCount} no follow-up schedule`);
+  if (r.staleCount > 0) out.push(`${r.staleCount} gone quiet`);
+  // Turn the silence multiplier into a plain-English sentence.
+  // avgSilence = days_silent / expected_cadence, so 1.0 = on time.
+  if (r.averageSilenceScore > 1.3 && r.averageSilenceScore <= 2) {
+    out.push('leads slipping behind');
+  } else if (r.averageSilenceScore > 2 && r.averageSilenceScore <= 5) {
+    out.push('most leads ignored for weeks');
+  } else if (r.averageSilenceScore > 5) {
+    out.push('most leads untouched for months');
   }
   return out;
 }
@@ -107,7 +113,7 @@ export const AgentHealthSection: React.FC<AgentHealthSectionProps> = ({
               </span>
             </div>
             <p className="text-[10px] text-muted mt-0.5 leading-tight">
-              Team-level signals — click an agent to drill in.
+              Agents with the biggest backlog on top. Click one to see what they need help with.
             </p>
           </div>
         </div>
@@ -173,11 +179,11 @@ const AgentHealthRow: React.FC<AgentHealthRowProps> = ({
           </span>
           <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${severityColor}`}>
             {severity === 'high' ? (
-              <><Flame size={9} className="inline mr-0.5 -mt-0.5" /> hot spot</>
+              <><Flame size={9} className="inline mr-0.5 -mt-0.5" /> needs help now</>
             ) : severity === 'med' ? (
-              <><AlertTriangle size={9} className="inline mr-0.5 -mt-0.5" /> at risk</>
+              <><AlertTriangle size={9} className="inline mr-0.5 -mt-0.5" /> slipping</>
             ) : (
-              <><Activity size={9} className="inline mr-0.5 -mt-0.5" /> watch</>
+              <><Activity size={9} className="inline mr-0.5 -mt-0.5" /> keep an eye on</>
             )}
           </span>
           <span className="text-[10px] text-muted">

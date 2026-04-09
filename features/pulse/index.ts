@@ -13,6 +13,7 @@
 // Top-level components the app mounts
 export { PulseDashboard } from './components/PulseDashboard';
 export { PlaybookEditor } from './components/PlaybookEditor';
+export { TeamManagement } from './components/TeamManagement';
 
 // Types that app-level code may need to reference (read-only)
 export type {

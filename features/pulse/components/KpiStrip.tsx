@@ -118,7 +118,7 @@ export const KpiStrip: React.FC<KpiStripProps> = ({ leads }) => {
           label="Progressive"
           value={metrics.progressive}
           tone="indigo"
-          hint="Long-cycle — watch cadence"
+          hint="Long sales cycle \u2014 keep in touch"
         />
         <KpiTile
           icon={Target}
@@ -131,7 +131,7 @@ export const KpiStrip: React.FC<KpiStripProps> = ({ leads }) => {
           label="Conversion 30d"
           value={`${metrics.conversion}%`}
           tone="emerald"
-          hint="Sold / (sold + closed)"
+          hint="Closed-won rate last 30 days"
         />
       </div>
 

@@ -142,6 +142,85 @@ export async function activatePlaybookVersion(id: string): Promise<void> {
 // re-reads `get_pulse_feed` so agents see the latest stored snapshot.
 
 // ---------------------------------------------------------------------------
+// Team management (Phase D): admin-only invite, deactivate, reactivate,
+// set_role. All calls go through the `pulse-admin-users` edge function
+// which enforces admin-only access and uses the service_role key.
+// ---------------------------------------------------------------------------
+
+export interface TeamMember {
+  id: string;
+  email: string;
+  name: string;
+  role: 'agent' | 'admin';
+  active: boolean;
+  points?: number;
+}
+
+export interface AdminActionResponse {
+  ok?: boolean;
+  error?: string;
+  user_id?: string;
+  email?: string;
+}
+
+/**
+ * Fetch every profile (active AND inactive) for the Team Management page.
+ * Regular agents never call this; admin UI only.
+ */
+export async function listAllTeamMembers(): Promise<TeamMember[]> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, email, name, role, active, points')
+    .order('active', { ascending: false })
+    .order('name', { ascending: true });
+  if (error) {
+    console.warn('listAllTeamMembers failed:', error.message);
+    return [];
+  }
+  return (data ?? []) as TeamMember[];
+}
+
+async function invokeAdminAction(body: Record<string, unknown>): Promise<AdminActionResponse> {
+  try {
+    const { data, error } = await supabase.functions.invoke<AdminActionResponse>(
+      'pulse-admin-users',
+      { body },
+    );
+    if (error) {
+      console.warn('pulse-admin-users invoke error:', error.message);
+      return { error: error.message };
+    }
+    return data ?? { error: 'empty response' };
+  } catch (err) {
+    console.warn('pulse-admin-users threw:', err);
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function inviteTeamMember(params: {
+  email: string;
+  name?: string;
+  role?: 'agent' | 'admin';
+}): Promise<AdminActionResponse> {
+  return invokeAdminAction({ action: 'invite', ...params });
+}
+
+export async function deactivateTeamMember(userId: string): Promise<AdminActionResponse> {
+  return invokeAdminAction({ action: 'deactivate', user_id: userId });
+}
+
+export async function reactivateTeamMember(userId: string): Promise<AdminActionResponse> {
+  return invokeAdminAction({ action: 'reactivate', user_id: userId });
+}
+
+export async function setTeamMemberRole(
+  userId: string,
+  role: 'agent' | 'admin',
+): Promise<AdminActionResponse> {
+  return invokeAdminAction({ action: 'set_role', user_id: userId, role });
+}
+
+// ---------------------------------------------------------------------------
 // Pulse-2: AI insight generation via the `pulse-generate-insight` edge fn.
 // ---------------------------------------------------------------------------
 

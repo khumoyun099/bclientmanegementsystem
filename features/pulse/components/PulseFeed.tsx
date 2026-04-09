@@ -38,10 +38,10 @@ export const PulseFeed: React.FC<PulseFeedProps> = ({ agentId, showAgent, onOpen
             </h2>
             <p className="text-[10px] text-muted mt-0.5 flex items-center gap-1.5">
               {loading && totalCount === 0
-                ? 'Computing signals…'
+                ? 'Looking for leads that need attention…'
                 : totalCount === 0
                 ? 'Nothing urgent. Keep it up.'
-                : `${totalCount} action${totalCount === 1 ? '' : 's'} ranked by neglect risk`}
+                : `${totalCount} lead${totalCount === 1 ? '' : 's'} that need attention, most important first`}
               {lastRefreshedAt && ` · updated ${lastRefreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
               {narrating && (
                 <span className="inline-flex items-center gap-1 text-brand-400/70">
@@ -50,7 +50,7 @@ export const PulseFeed: React.FC<PulseFeedProps> = ({ agentId, showAgent, onOpen
               )}
               {!aiEnabled && !narrating && totalCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-amber-400/70">
-                  · AI off — showing rule-based tips
+                  · AI off — showing plain tips
                 </span>
               )}
             </p>

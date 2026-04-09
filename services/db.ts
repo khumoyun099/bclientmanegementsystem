@@ -48,15 +48,19 @@ class DBService {
 
       if (!profile) {
         console.log('No profile found, creating new profile for user:', user.id);
-        
-        // Try INSERT first (for new users)
+
+        // SECURITY: always default new users to AGENT. The previous
+        // "auto-admin if email includes 'admin'" heuristic was a bug —
+        // anyone who registered with "admin" in their email became admin.
+        // Admin promotion now happens only via explicit action in the
+        // Team Management UI (Phase D) or by direct DB update.
         const { data: newProfile, error: insertError } = await supabase
           .from('profiles')
           .insert({
             id: user.id,
             email: user.email,
             name: user.user_metadata?.name || user.email?.split('@')[0] || 'User',
-            role: userEmail.includes('admin') ? Role.ADMIN : Role.AGENT,
+            role: Role.AGENT,
             points: 0,
             theme_preference: 'dark'
           })

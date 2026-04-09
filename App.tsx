@@ -15,7 +15,7 @@ import { Auth } from './components/Auth';
 import { DatabaseSetup } from './components/DatabaseSetup';
 import { TeamStatsPage } from './components/TeamStatsPage';
 import { Dashboard } from './components/Dashboard';
-import { PlaybookEditor } from './features/pulse';
+import { PlaybookEditor, TeamManagement } from './features/pulse';
 import { MyTasks } from './components/MyTasks';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Plus, Loader2, RefreshCw, Trophy, Users, LayoutDashboard, Calendar, Search, Zap, AlertTriangle, Copy, Check, Link, ChevronDown, X, ExternalLink, Trash2, CalendarClock } from 'lucide-react';
@@ -123,6 +123,10 @@ const App: React.FC = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsTotalCount, setLeadsTotalCount] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Set true when Supabase emits PASSWORD_RECOVERY after the user clicks
+  // a reset-password link. Routes App to the Auth component in
+  // reset-password mode instead of the normal authenticated UI.
+  const [needsPasswordReset, setNeedsPasswordReset] = useState(false);
   // "Has more" is derived rather than stored so it can never drift out of
   // sync with leads.length after local mutations (delete / bulk delete).
   const leadsHasMore = leads.length < leadsTotalCount;
@@ -209,7 +213,23 @@ const App: React.FC = () => {
       else setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // When a user arrives via a password-reset email, Supabase puts them
+      // in a temporarily-authenticated state and emits PASSWORD_RECOVERY.
+      // We must route them to the new-password form instead of the normal
+      // authenticated UI — otherwise the recovery never completes.
+      if (event === 'PASSWORD_RECOVERY') {
+        setNeedsPasswordReset(true);
+        setSession(session);
+        setLoading(false);
+        return;
+      }
+      // After the user sets a new password and calls updateUser, the
+      // client emits a USER_UPDATED event followed by a SIGNED_OUT when
+      // we explicitly sign them out. Clear the recovery flag on sign-out.
+      if (event === 'SIGNED_OUT') {
+        setNeedsPasswordReset(false);
+      }
       setSession(session);
       if (session) fetchProfile();
       else {
@@ -250,7 +270,14 @@ const App: React.FC = () => {
       const leadData = Array.isArray(leadsRes?.data) ? leadsRes.data : [];
       setLeads(leadData);
       setLeadsTotalCount(leadsRes?.count ?? leadData.length);
-      setAllUsers(Array.isArray(profiles) ? profiles : []);
+      // Filter out soft-deleted (inactive) profiles everywhere in the app.
+      // The Team Management page loads its own full list (including
+      // inactive) via listAllTeamMembers() so removed users remain
+      // visible to admins in the "Removed" section for reactivation.
+      const activeProfiles = (Array.isArray(profiles) ? profiles : []).filter(
+        (p: any) => p.active !== false,
+      );
+      setAllUsers(activeProfiles);
       setActivityLogs(Array.isArray(logs) ? logs : []);
       if (updatedProfile) setCurrentUser(updatedProfile);
     } catch (err: any) {
@@ -478,6 +505,11 @@ const App: React.FC = () => {
       <Loader2 className="animate-spin text-brand-500" size={32} />
     </div>
   );
+
+  // Password-recovery session → route to Auth component in reset-password
+  // mode even though we technically have a session. Once the user submits
+  // the new password we sign them out and they re-login normally.
+  if (needsPasswordReset) return <Auth initialMode="reset-password" />;
 
   if (!session || !currentUser) return <Auth />;
 
@@ -874,9 +906,20 @@ const App: React.FC = () => {
               <AccountabilityDashboard users={allUsers} leads={leads} logs={activityLogs} onSelectLead={(lead) => setSelectedLeadId(lead.id)} onRefresh={refreshData} />
             </ErrorBoundary>
 
-            {/* Sales Playbook — admin teaches the AI the team's sales doctrine.
-                Editable immediately even though Pulse-1 doesn't use it for
-                narration yet; Pulse-2 will consume the active version. */}
+            {/* Team Management — admin invites, removes, reactivates,
+                changes roles. Must come before the Playbook editor so
+                the admin's primary operational task is top-of-screen. */}
+            <div className="pt-10">
+              <ErrorBoundary>
+                <TeamManagement
+                  currentUser={currentUser}
+                  leads={leads}
+                  onRefresh={refreshData}
+                />
+              </ErrorBoundary>
+            </div>
+
+            {/* Sales Playbook — admin teaches the AI the team's sales doctrine. */}
             <div className="pt-10">
               <ErrorBoundary>
                 <PlaybookEditor currentUser={currentUser} />
