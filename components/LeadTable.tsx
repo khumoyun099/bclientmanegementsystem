@@ -365,12 +365,25 @@ const LeadRow = memo(({ lead, activeTab, currentUser, showAgentColumn, onUpdate,
                     <td className="px-2 py-1.5 overflow-hidden" style={{ width: colWidths.fourDays }}>
                         <div className="flex gap-1.5 justify-center">
                             {[0, 1, 2, 3].map(i => {
-                                const isChecked = (lead.cold_check_history || []).length > i;
+                                const history = lead.cold_check_history || [];
+                                const isChecked = history.length > i;
+                                // Yellow = checked TODAY (the agent just did this one).
+                                // Blue = checked on a previous day (already done).
+                                // This helps agents scan the table and instantly see
+                                // which check-ins they've done today vs earlier.
+                                const checkedToday = isChecked && history[i] === today;
                                 return (
                                     <button
                                         key={i}
                                         onClick={() => !isChecked && toggleColdCheck(i)}
-                                        className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${isChecked ? 'bg-brand-500 border-brand-500 text-white' : 'bg-white/5 border-white/10 text-transparent hover:border-brand-500'}`}
+                                        title={isChecked ? `Checked on ${history[i]}` : `Day ${i + 1} — not yet`}
+                                        className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${
+                                            checkedToday
+                                                ? 'bg-amber-400 border-amber-400 text-black'
+                                                : isChecked
+                                                ? 'bg-brand-500 border-brand-500 text-white'
+                                                : 'bg-white/5 border-white/10 text-transparent hover:border-brand-500'
+                                        }`}
                                     >
                                         <Check size={8} strokeWidth={4} />
                                     </button>
